@@ -127,24 +127,24 @@ pytest
 
 ### Legacy Test Scripts
 
-The scripts in `tests/` still work but are deprecated. Use the consolidated
+The scripts in `mcp-joern/tests/` are deprecated. Use the consolidated
 test suite in `../tests/` instead.
 
 ### Functional test (all 18 MCP tools)
 
 ```bash
-cd mcp-joern
-uv run python tests/test_mcp_functional.py \
+python tests/integration/test_mcp_functional.py \
     --http-url http://localhost:8080 \
     --mcp-url  http://localhost:9000/sse \
-    --sven     /datadrive/data/raw/sven/sven_preprocessed_v2.jsonl \
+    --cpg-dir  /datadrive/data/raw/sven/file \
     --report   mcp_functional_report.md
 ```
 
 Options:
 
-- `--sample-id <hex>` — skip auto-selection, test a specific CPG
-- `--candidates N` — scan N SVEN samples to find richest CPG (default 30)
+- `--cpg-dir <path>` — directory of per-sample source dirs (each sub-dir name = sample_id); default `/datadrive/data/raw/sven/file`
+- `--sample-id <hex>` — skip auto-selection, use a specific sample directory under `--cpg-dir`
+- `--candidates N` — scan N source dirs to find richest CPG (default 30)
 
 ## Tool reference
 
