@@ -1,10 +1,13 @@
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
+from collections import OrderedDict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -81,12 +84,86 @@ def _json_error(msg: str, *, code: str = "bad_request") -> dict[str, str]:
     return {"error": msg, "code": code}
 
 
+class LRUCache:
+    """Thread-safe LRU cache with TTL support for query result caching.
+
+    Metrics: hits, misses, evictions
+    """
+
+    def __init__(self, max_size: int = 1000, ttl_sec: int = 300):
+        self.max_size = max_size
+        self.ttl_sec = ttl_sec
+        self._cache: OrderedDict[str, tuple[dict, float]] = OrderedDict()
+        self._lock = threading.Lock()
+        self.hits = 0
+        self.misses = 0
+        self.evictions = 0
+
+    def _make_key(self, session_id: str, query_hash: str) -> str:
+        """Create cache key from session_id and md5(query_hash)."""
+        return f"{session_id}:{query_hash}"
+
+    def get(self, session_id: str, query_hash: str) -> Optional[dict]:
+        """Get cached result if exists and not expired."""
+        key = self._make_key(session_id, query_hash)
+        current_time = time.time()
+
+        with self._lock:
+            if key not in self._cache:
+                self.misses += 1
+                return None
+
+            result, timestamp = self._cache[key]
+            if current_time - timestamp > self.ttl_sec:
+                # Entry expired
+                del self._cache[key]
+                self.misses += 1
+                return None
+
+            # Move to end (most recently used)
+            self._cache.move_to_end(key)
+            self.hits += 1
+            return result
+
+    def put(self, session_id: str, query_hash: str, result: dict) -> None:
+        """Add result to cache, evicting LRU entries if necessary."""
+        key = self._make_key(session_id, query_hash)
+        current_time = time.time()
+
+        with self._lock:
+            # If max_size is 0, don't cache anything
+            if self.max_size <= 0:
+                return
+
+            # Evict if at capacity
+            while len(self._cache) >= self.max_size:
+                self._cache.popitem(last=False)  # Remove oldest (least recently used)
+                self.evictions += 1
+
+            self._cache[key] = (result, current_time)
+
+    def get_metrics(self) -> dict:
+        """Return cache metrics."""
+        with self._lock:
+            hit_rate = self.hits / (self.hits + self.misses) if (self.hits + self.misses) > 0 else 0.0
+            return {
+                "hits": self.hits,
+                "misses": self.misses,
+                "evictions": self.evictions,
+                "size": len(self._cache),
+                "max_size": self.max_size,
+                "ttl_sec": self.ttl_sec,
+                "hit_rate": hit_rate,
+            }
+
+
 class JoernProxyHandler(BaseHTTPRequestHandler):
     internal_url: str = ""
     parse_bin: str = "/opt/joern/joern-cli/joern-parse"
     cpg_out_dir: str = "/workspace/cpg-out"
     parse_timeout_sec: int = 900
     query_timeout_sec: int = 600
+    query_cache: Optional[LRUCache] = None
 
     def _log_event(self, event: str, **fields: Any) -> None:
         payload: dict[str, Any] = {
@@ -119,6 +196,17 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
         if m:
             return m.group(1)
         return "cpgql"
+
+    @staticmethod
+    def _should_cache(query_class: str) -> bool:
+        """Determine if query should be cached. Skip load_cpg, importCpg, cleanup."""
+        skip_classes = {"load_cpg", "importCpg", "cleanup", "empty", "unknown", "invalid_json"}
+        return query_class not in skip_classes
+
+    @staticmethod
+    def _query_hash(query: str) -> str:
+        """Generate md5 hash of query for cache key."""
+        return hashlib.md5(query.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _preview_query(query: str, limit: int = 180) -> str:
@@ -306,6 +394,14 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
             self._handle_cleanup()
             return
 
+        if self.path == "/cache-metrics":
+            # Return cache metrics for monitoring
+            if self.query_cache:
+                self._send_json(HTTPStatus.OK, self.query_cache.get_metrics())
+            else:
+                self._send_json(HTTPStatus.OK, {"error": "cache not enabled"})
+            return
+
         if self.path != "/query-sync":
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
             return
@@ -314,6 +410,7 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
         try:
             query_class = "unknown"
             query_preview = ""
+            query_str = ""
             try:
                 req = json.loads(body.decode("utf-8") if body else "{}")
                 if isinstance(req, dict):
@@ -323,6 +420,26 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
             except Exception:
                 query_class = "invalid_json"
             request_id = self.headers.get("X-Request-Id")
+            session_id = self.headers.get("X-Session-Id") or "default"
+
+            # Try cache hit for cacheable queries
+            if self.query_cache and self._should_cache(query_class):
+                query_hash = self._query_hash(query_str)
+                cached_result = self.query_cache.get(session_id, query_hash)
+                if cached_result is not None:
+                    self._log_event(
+                        "query_sync",
+                        request_id=request_id,
+                        query_class=query_class,
+                        query_preview=query_preview,
+                        status_code=200,
+                        success=True,
+                        latency_ms=0,
+                        cache_hit=True,
+                    )
+                    self._send_json(HTTPStatus.OK, cached_result)
+                    return
+
             t0 = time.perf_counter()
             resp = httpx.post(
                 self.internal_url,
@@ -333,6 +450,12 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
             latency_ms = int((time.perf_counter() - t0) * 1000.0)
             # Preserve status and body; clients expect Joern's /query-sync JSON.
             resp_json = resp.json()
+
+            # Cache successful responses for cacheable queries
+            if self.query_cache and self._should_cache(query_class) and resp.status_code == 200:
+                query_hash = self._query_hash(query_str)
+                self.query_cache.put(session_id, query_hash, resp_json)
+
             success = None
             if isinstance(resp_json, dict):
                 success = resp_json.get("success")
@@ -344,6 +467,7 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
                 status_code=resp.status_code,
                 success=success,
                 latency_ms=latency_ms,
+                cache_hit=False,
             )
             self._send_json(resp.status_code, resp_json)
         except Exception as e:
@@ -368,6 +492,11 @@ def main() -> None:
     query_timeout_sec = _env_int("JOERN_QUERY_TIMEOUT_SEC", 600)
     # Joern HTTP server endpoint inside the container.
     internal_url = f"http://{internal_host}:{internal_port}/query-sync"
+
+    # Query cache configuration
+    cache_max_size = _env_int("QUERY_CACHE_MAX_SIZE", 1000)
+    cache_ttl_sec = _env_int("QUERY_CACHE_TTL_SEC", 300)
+    JoernProxyHandler.query_cache = LRUCache(max_size=cache_max_size, ttl_sec=cache_ttl_sec)
 
     JoernProxyHandler.internal_url = internal_url
     JoernProxyHandler.parse_bin = parse_bin
