@@ -17,7 +17,8 @@ services:
       JOERN_INTERNAL_PORT: "${JOERN_INTERNAL_PORT:-18080}"
       # Must cover long importCpg/load_cpg (prepare_cpg_per_sample); default 600 matches agent --joern-timeout.
       JOERN_QUERY_TIMEOUT_SEC: "${JOERN_QUERY_TIMEOUT_SEC:-600}"
-      JOERN_JAVA_XMX: "${JOERN_JAVA_XMX:-4g}"
+      # OPTIMIZED FOR SMALL CODEBASES (10-200 LOC): Reduced from 4g to 1g
+      JOERN_JAVA_XMX: "${JOERN_JAVA_XMX:-1g}"
       JOERN_SERVER_AUTH_USERNAME: "${JOERN_SERVER_AUTH_USERNAME:-}"
       JOERN_SERVER_AUTH_PASSWORD: "${JOERN_SERVER_AUTH_PASSWORD:-}"
       # Proxy listens on JOERN_PUBLISH_PORT by default (env name used by docker/healthcheck.sh).
@@ -30,12 +31,13 @@ services:
         soft: 65536
         hard: 65536
     # Total memory for Joern JVM + proxy + MCP. Must exceed JOERN_JAVA_XMX; see deploy/.env.example.
+    # OPTIMIZED FOR SMALL CODEBASES (10-200 LOC): Reduced from 12g to 4g
     deploy:
       resources:
         limits:
-          memory: "${JOERN_MEMORY_LIMIT:-12g}"
+          memory: "${JOERN_MEMORY_LIMIT:-4g}"
         reservations:
-          memory: 2g
+          memory: 1g
     healthcheck:
       test: ["CMD", "/usr/local/bin/joern-healthcheck.sh"]
       interval: 30s
