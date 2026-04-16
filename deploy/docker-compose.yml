@@ -1,0 +1,61 @@
+services:
+  joern:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: neuralatlas-joern:${JOERN_IMAGE_TAG:-local}
+    ports:
+      - "${JOERN_PUBLISH_PORT:-8080}:8080"
+      - "${MCP_PUBLISH_PORT:-9000}:9000"
+    volumes:
+      - ../ingest:/workspace/ingest:ro
+      - joern-workspace:/workspace/joern-workspace
+      - cpg-out:/workspace/cpg-out
+    environment:
+      JOERN_SERVER_HOST: "${JOERN_SERVER_HOST:-0.0.0.0}"
+      # Internal Joern HTTP port (proxy listens on 8080 and forwards here).
+      JOERN_INTERNAL_PORT: "${JOERN_INTERNAL_PORT:-18080}"
+      # Must cover long importCpg/load_cpg (prepare_cpg_per_sample); default 600 matches agent --joern-timeout.
+      JOERN_QUERY_TIMEOUT_SEC: "${JOERN_QUERY_TIMEOUT_SEC:-600}"
+      JOERN_JAVA_XMX: "${JOERN_JAVA_XMX:-4g}"
+      JOERN_SERVER_AUTH_USERNAME: "${JOERN_SERVER_AUTH_USERNAME:-}"
+      JOERN_SERVER_AUTH_PASSWORD: "${JOERN_SERVER_AUTH_PASSWORD:-}"
+      # Proxy listens on JOERN_PUBLISH_PORT by default (env name used by docker/healthcheck.sh).
+      PROXY_PORT: "${JOERN_PUBLISH_PORT:-8080}"
+      # MCP SSE server port.
+      MCP_PORT: "${MCP_PUBLISH_PORT:-9000}"
+      MCP_HOST: "0.0.0.0"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    # Total memory for Joern JVM + proxy + MCP. Must exceed JOERN_JAVA_XMX; see deploy/.env.example.
+    deploy:
+      resources:
+        limits:
+          memory: "${JOERN_MEMORY_LIMIT:-12g}"
+        reservations:
+          memory: 2g
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/joern-healthcheck.sh"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 120s
+    labels:
+      autoheal: "true"
+    restart: unless-stopped
+
+  autoheal:
+    image: willfarrell/autoheal
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: "${AUTOHEAL_INTERVAL:-10}"
+      AUTOHEAL_START_PERIOD: "${AUTOHEAL_START_PERIOD:-180}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+volumes:
+  joern-workspace:
+  cpg-out:

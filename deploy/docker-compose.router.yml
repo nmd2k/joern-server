@@ -1,0 +1,60 @@
+services:
+  joern:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: neuralatlas-joern:${JOERN_IMAGE_TAG:-local}
+    volumes:
+      - ../ingest:/workspace/ingest:ro
+      - joern-workspace:/workspace/joern-workspace
+      - cpg-out:/workspace/cpg-out
+    environment:
+      JOERN_SERVER_HOST: "${JOERN_SERVER_HOST:-0.0.0.0}"
+      JOERN_INTERNAL_PORT: "${JOERN_INTERNAL_PORT:-18080}"
+      JOERN_JAVA_XMX: "${JOERN_JAVA_XMX:-4g}"
+      JOERN_SERVER_AUTH_USERNAME: "${JOERN_SERVER_AUTH_USERNAME:-}"
+      JOERN_SERVER_AUTH_PASSWORD: "${JOERN_SERVER_AUTH_PASSWORD:-}"
+      PROXY_PORT: "8080"
+      MCP_PORT: "9000"
+      MCP_HOST: "0.0.0.0"
+      JOERN_QUERY_TIMEOUT_SEC: "${JOERN_QUERY_TIMEOUT_SEC:-600}"
+    deploy:
+      resources:
+        limits:
+          memory: "${JOERN_MEMORY_LIMIT:-12g}"
+        reservations:
+          memory: 2g
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/joern-healthcheck.sh"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 120s
+    labels:
+      autoheal: "true"
+    restart: unless-stopped
+
+  joern-router:
+    image: haproxy:2.9
+    ports:
+      - "${JOERN_ROUTER_PUBLISH_PORT:-8080}:8080"
+    volumes:
+      - ./haproxy-joern.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      joern:
+        condition: service_started
+    restart: unless-stopped
+
+  autoheal:
+    image: willfarrell/autoheal
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: "${AUTOHEAL_INTERVAL:-10}"
+      AUTOHEAL_START_PERIOD: "${AUTOHEAL_START_PERIOD:-180}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+volumes:
+  joern-workspace:
+  cpg-out:

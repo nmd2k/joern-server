@@ -1,0 +1,40 @@
+{
+  "mcpServers": {
+    "joern": {
+      "autoApprove": [
+        "ping",
+        "load_cpg",
+        "get_method_callees",
+        "get_method_callers",
+        "get_class_full_name_by_id",
+        "get_class_methods_by_class_full_name",
+        "get_method_code_by_full_name",
+        "get_method_code_by_id",
+        "get_method_full_name_by_id",
+        "get_call_code_by_id",
+        "get_method_code_by_class_full_name_and_method_name",
+        "get_derived_classes_by_class_full_name",
+        "get_parent_classes_by_class_full_name",
+        "get_method_by_call_id",
+        "get_referenced_method_full_name_by_call_id",
+        "get_calls_in_method_by_method_full_name"
+      ],
+      "disabled": false,
+      "timeout": 1800,
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/home/user/github/joern_mcp",
+        "run",
+        "server.py"
+      ],
+      "transportType": "sse",
+      "config": {
+        "host": "127.0.0.1",
+        "port": "9000",
+        "log_level": "ERROR",
+        "description": "Joern mcp server"
+      }
+    }
+  }
+}
