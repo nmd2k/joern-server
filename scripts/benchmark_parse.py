@@ -206,6 +206,7 @@ def cleanup_sample(http_url: str, sample_id: str) -> bool:
 def benchmark_sequential_parse(
     files: list[Path],
     http_url: str,
+    cpg_out_dir: str,
     num_samples: int = 100,
 ) -> tuple[list[ParseResult], BenchmarkResult]:
     """Benchmark sequential parsing."""
@@ -216,7 +217,7 @@ def benchmark_sequential_parse(
     files_to_test = random.sample(files, min(num_samples, len(files)))
 
     for filepath in files_to_test:
-        parse_result = parse_single_file(filepath, http_url)
+        parse_result = parse_single_file(filepath, http_url, cpg_out_dir)
         parse_results.append(parse_result)
 
         if parse_result.success:
@@ -233,6 +234,7 @@ def benchmark_sequential_parse(
 def benchmark_concurrent_parse(
     files: list[Path],
     http_url: str,
+    cpg_out_dir: str,
     concurrency: int,
     num_samples: int = 100,
 ) -> float:
@@ -243,7 +245,7 @@ def benchmark_concurrent_parse(
     successful = 0
 
     def parse_and_cleanup(filepath: Path) -> bool:
-        result = parse_single_file(filepath, http_url, timeout=120)
+        result = parse_single_file(filepath, http_url, cpg_out_dir, timeout=120)
         if result.success:
             cleanup_sample(http_url, result.sample_id)
             return True
@@ -395,6 +397,7 @@ def main():
     parser = argparse.ArgumentParser(description="Benchmark Joern Server parsing performance")
     parser.add_argument("--dataset", type=str, required=True, help="Path to dataset directory")
     parser.add_argument("--output", type=str, default="report/benchmark-sprint1.md", help="Output report path")
+    parser.add_argument("--cpg-out-dir", type=str, default="tmp/eval")
     parser.add_argument("--http-url", type=str, default="http://localhost:8080", help="Joern Server HTTP URL")
     parser.add_argument("--samples", type=int, default=100, help="Number of samples to test")
     parser.add_argument("--concurrency-levels", type=str, default="1,5,10,20", help="Concurrency levels to test")
@@ -428,7 +431,7 @@ def main():
 
     # Sequential parse benchmark
     print("\n[1/3] Running sequential parse benchmark...")
-    parse_results, seq_result = benchmark_sequential_parse(test_files, args.http_url, args.samples)
+    parse_results, seq_result = benchmark_sequential_parse(test_files, args.http_url, args.cpg_out_dir, args.samples)
     benchmark.parse_times = seq_result.parse_times
     benchmark.successful_parses = seq_result.successful_parses
     benchmark.total_samples = seq_result.total_samples
@@ -444,7 +447,7 @@ def main():
 
     for conc in concurrency_levels:
         print(f"  Testing concurrency={conc}...")
-        throughput = benchmark_concurrent_parse(test_files, args.http_url, conc, num_samples=50)
+        throughput = benchmark_concurrent_parse(test_files, args.http_url, args.cpg_out_dir, conc, num_samples=50)
         benchmark.concurrent_throughputs[conc] = throughput
         print(f"    Throughput: {throughput:.2f} files/sec")
 
