@@ -12,13 +12,18 @@ Result status per tool:
   [SKIP]  required ID was not discoverable for this CPG
 
 Run (from repo root):
-  pytest tests/integration/test_mcp_functional.py -v
+  python tests/integration/test_mcp_functional.py \
+      --http-url http://localhost:8080 \
+      --mcp-url  http://localhost:9000/sse \
+      --cpg-dir  /datadrive/data/raw/sven/file \
+      --report   mcp_functional_report.md
 
 Options:
   --http-url   http://localhost:8080
   --mcp-url    http://localhost:9000/sse
-  --sven       /path/to/sven_preprocessed_v2.jsonl
-  --sample-id  <hex>  (skip selection, use this ID directly)
+  --cpg-dir    /datadrive/data/raw/sven/file   (directory of per-sample source dirs)
+  --sample-id  <hex>  (skip selection, use this sample directory directly)
+  --candidates N      (how many dirs to scan; default 30)
   --report     mcp_functional_report.md
 """
 
@@ -26,7 +31,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import re
 import sys
 import time
@@ -36,6 +40,19 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
+
+# -- Language helpers ----------------------------------------------------------
+
+_EXT_TO_LANG = {
+    '.c': 'c', '.cpp': 'c', '.cc': 'c', '.cxx': 'c', '.h': 'c', '.hpp': 'c',
+    '.cs': 'csharpsrc', '.go': 'golang', '.java': 'java',
+    '.js': 'jssrc', '.ts': 'jssrc', '.py': 'pythonsrc', '.rb': 'rubysrc',
+}
+
+
+def _lang_from_ext(ext: str) -> str:
+    return _EXT_TO_LANG.get(ext.lower(), '')
+
 
 # -- MCP client ----------------------------------------------------------------
 try:
@@ -88,10 +105,11 @@ class HTTP:
         self.base = base.rstrip('/')
         self.timeout = timeout
 
-    def parse(self, sample_id: str, code: str) -> bool:
+    def parse(self, sample_id: str, code: str,
+              language: str = 'c', filename: str = 'snippet.c') -> bool:
         r = httpx.post(f'{self.base}/parse', json={
             'sample_id': sample_id, 'source_code': code,
-            'language': 'c', 'filename': 'snippet.c', 'overwrite': True,
+            'language': language, 'filename': filename, 'overwrite': True,
         }, timeout=self.timeout)
         return r.json().get('ok', False)
 
@@ -604,34 +622,47 @@ def generate_markdown(info: CPGInfo, results: List[ToolTestResult], args) -> str
 
 # -- Sample selection ----------------------------------------------------------
 
-def select_rich_sample(http: HTTP, sven_path: str, n_candidates: int = 30) -> Optional[Tuple[str, str]]:
-    """Parse up to n_candidates SVEN C samples; return (sample_id, code) of richest."""
-    print(f'Scanning up to {n_candidates} SVEN C samples for richest CPG...')
-    best_score, best_id, best_code = -1, None, None
+def select_rich_cpg(http: HTTP, cpg_dir: str, n_candidates: int = 30) -> Optional[Tuple[str, str]]:
+    """Scan per-sample source directories under cpg_dir; return (sample_id, code) of richest.
 
-    with open(sven_path) as f:
-        count = 0
-        for line in f:
-            d = json.loads(line)
-            if d.get('language') != 'c':
-                continue
-            sid, code = d['id'], d['code']
-            ok = http.parse(sid, code)
-            if not ok:
-                continue
-            sess = f'sel-{sid[:8]}'
-            http.importcpg(sid, sess)
-            methods = parse_int(http.query(
-                'cpg.method.filter(m => m.name != "<global>" && !m.name.startsWith("<operator>")).size', sess))
-            calls = parse_int(http.query(
-                'cpg.call.filter(!_.methodFullName.startsWith("<operator>")).size', sess))
-            score = methods * calls
-            print(f'  {sid[:16]}  methods={methods:3d}  calls={calls:3d}  score={score}')
-            if score > best_score:
-                best_score, best_id, best_code = score, sid, code
-            count += 1
-            if count >= n_candidates:
-                break
+    Each sub-directory name is the sample_id and must contain at least one source file
+    (e.g. content.c).  The source is posted to /parse exactly as the benchmark script does.
+    """
+    root = Path(cpg_dir)
+    entries = sorted(e for e in root.iterdir() if e.is_dir())
+    print(f'Scanning up to {n_candidates} source dirs in {cpg_dir} ...')
+    best_score, best_id, best_code = -1, None, None
+    count = 0
+
+    for entry in entries:
+        sample_id = entry.name
+        src_files = sorted(entry.iterdir())
+        if not src_files:
+            continue
+        src = src_files[0]
+        lang = _lang_from_ext(src.suffix) or 'c'
+        try:
+            code = src.read_text(encoding='utf-8', errors='ignore')
+        except Exception:
+            continue
+
+        ok = http.parse(sample_id, code, language=lang, filename=src.name)
+        if not ok:
+            continue
+
+        sess = f'sel-{sample_id[:8]}'
+        http.importcpg(sample_id, sess)
+        methods = parse_int(http.query(
+            'cpg.method.filter(m => m.name != "<global>" && !m.name.startsWith("<operator>")).size', sess))
+        calls = parse_int(http.query(
+            'cpg.call.filter(!_.methodFullName.startsWith("<operator>")).size', sess))
+        score = methods * calls
+        print(f'  {sample_id[:24]}  methods={methods:3d}  calls={calls:3d}  score={score}')
+        if score > best_score:
+            best_score, best_id, best_code = score, sample_id, code
+        count += 1
+        if count >= n_candidates:
+            break
 
     if best_id:
         print(f'\nSelected: {best_id}  (score={best_score})')
@@ -645,12 +676,12 @@ def main() -> None:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--http-url',  default='http://localhost:8080')
     ap.add_argument('--mcp-url',   default='http://localhost:9000/sse')
-    ap.add_argument('--sven',
-                    default='/datadrive/data/raw/sven/sven_preprocessed_v2.jsonl')
+    ap.add_argument('--cpg-dir',   default='/datadrive/data/raw/sven/file',
+                    help='Directory of per-sample source dirs (each sub-dir name = sample_id)')
     ap.add_argument('--sample-id', default='',
-                    help='Skip selection and use this sample ID directly')
+                    help='Skip selection and use this sample directory directly')
     ap.add_argument('--candidates', type=int, default=30,
-                    help='How many samples to scan during selection (default: 30)')
+                    help='How many dirs to scan during selection (default: 30)')
     ap.add_argument('--report',    default='mcp_functional_report.md')
     args = ap.parse_args()
 
@@ -662,25 +693,25 @@ def main() -> None:
 
     # -- Select / load sample --------------------------------------------------
     if args.sample_id:
-        # User specified an ID - look up code from SVEN
-        code = None
-        with open(args.sven) as f:
-            for line in f:
-                d = json.loads(line)
-                if d['id'] == args.sample_id:
-                    code = d['code']
-                    break
-        if code is None:
-            print(f'ERROR: sample_id {args.sample_id} not found in {args.sven}')
-            sys.exit(1)
         sample_id = args.sample_id
-        print(f'Using specified sample: {sample_id}')
-        if not http.parse(sample_id, code):
+        sample_dir = Path(args.cpg_dir) / sample_id
+        if not sample_dir.is_dir():
+            print(f'ERROR: {sample_dir} does not exist')
+            sys.exit(1)
+        src_files = sorted(sample_dir.iterdir())
+        if not src_files:
+            print(f'ERROR: no source files in {sample_dir}')
+            sys.exit(1)
+        src = src_files[0]
+        lang = _lang_from_ext(src.suffix) or 'c'
+        code = src.read_text(encoding='utf-8', errors='ignore')
+        print(f'Using specified sample: {sample_id} ({src.name})')
+        if not http.parse(sample_id, code, language=lang, filename=src.name):
             print('WARNING: parse returned not-ok (CPG may already exist; continuing)')
     else:
-        result = select_rich_sample(http, args.sven, args.candidates)
+        result = select_rich_cpg(http, args.cpg_dir, args.candidates)
         if result is None:
-            print('ERROR: could not parse any SVEN C sample')
+            print('ERROR: could not parse any sample from CPG directory')
             sys.exit(1)
         sample_id, code = result
 
