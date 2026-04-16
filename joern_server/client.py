@@ -8,8 +8,6 @@ from urllib.parse import urlparse
 
 import httpx
 
-from training.eval.executor import ExecutionDict
-
 
 def _normalize_base_urls(urls: str | Sequence[str]) -> list[str]:
     if isinstance(urls, str):
@@ -103,7 +101,7 @@ class JoernHTTPQueryExecutor:
                 self._pinned_base = base
             return base
 
-    def execute(self, cpgql: str) -> ExecutionDict:
+    def execute(self, cpgql: str) -> dict[str, Any]:
         base = self._base_for_request()
         parsed = urlparse(base)
         if parsed.scheme not in ("http", "https"):
