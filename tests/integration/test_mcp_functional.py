@@ -348,7 +348,7 @@ async def run_mcp_functional(mcp_url: str, info: CPGInfo, http: HTTP) -> List[To
             try:
                 resp = await client.call_tool(tool_name, args)
                 ms = int((time.perf_counter() - t0) * 1000)
-                text = resp[0].text if resp else ''
+                text = resp.content[0].text if resp and resp.content else ''
             except Exception as e:
                 ms = int((time.perf_counter() - t0) * 1000)
                 results.append(ToolTestResult(
@@ -578,7 +578,7 @@ def generate_markdown(info: CPGInfo, results: List[ToolTestResult], args) -> str
         elif r.status == 'EXPECTED_EMPTY':
             detail = r.expected_empty_reason or ''
         elif r.status in ('EMPTY', 'FAIL'):
-            detail = ' . '.join(r.debug_lines)[:200]
+            detail = (' . '.join(r.debug_lines) or r.raw_output.replace('\n', ' '))[:200]
         elif r.status == 'SKIP':
             detail = r.debug_lines[0] if r.debug_lines else 'required ID not found'
         else:
