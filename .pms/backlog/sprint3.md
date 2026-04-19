@@ -12,13 +12,13 @@
 
 | ID     | Title                                              | Type    | Priority | Status | Notes |
 | ------ | -------------------------------------------------- | ------- | -------- | ------ | ----- |
-| S3-001 | CPG hash-based deduplication in `/parse`           | Feature | High     | In Progress | Compute SHA-256 of `source_code`; if matching CPG exists in archive, symlink/copy → skip joern-parse |
-| S3-002 | Tag-based CPG archiving in `/cleanup`              | Feature | High     | In Progress | Accept `{"sample_id": "...", "archive": true}`; move CPG to archive dir instead of delete |
-| S3-003 | Disk LRU eviction for CPG archive                  | Feature | High     | In Progress | Configurable `CPG_ARCHIVE_MAX_GB` / `CPG_ARCHIVE_MAX_COUNT`; evict LRU entries when limit hit |
-| S3-004 | CPG cache index (hash → archive path registry)     | Feature | High     | In Progress | JSON file-backed registry mapping `source_hash` → `{archive_path, sample_id, timestamp, size_bytes}` |
-| S3-005 | Unit + integration tests for CPG cache             | Testing | High     | In Progress | Cover: cache hit, cache miss, archive-on-cleanup, disk eviction, index corruption recovery |
-| S3-006 | Update HTTP API docs for new endpoints/fields      | Chore   | Medium   | In Progress | Document `archive` field in `/cleanup`, `cache_hit` field in `/parse` response, new env vars |
-| S3-007 | Update SRS and product backlog for Sprint 3 scope  | Chore   | Medium   | In Progress | Promote CPG cache from "Future Considerations" to implemented features; close PB-008 |
+| S3-001 | CPG hash-based deduplication in `/parse`           | Feature | High     | Done | Compute SHA-256 of `source_code`; if matching CPG exists in archive, symlink/copy → skip joern-parse |
+| S3-002 | Tag-based CPG archiving in `/cleanup`              | Feature | High     | Done | Accept `{"sample_id": "...", "archive": true}`; move CPG to archive dir instead of delete |
+| S3-003 | Disk LRU eviction for CPG archive                  | Feature | High     | Done | Configurable `CPG_ARCHIVE_MAX_GB` / `CPG_ARCHIVE_MAX_COUNT`; evict LRU entries when limit hit |
+| S3-004 | CPG cache index (hash → archive path registry)     | Feature | High     | Done | JSON file-backed registry mapping `source_hash` → `{archive_path, sample_id, timestamp, size_bytes}` |
+| S3-005 | Unit + integration tests for CPG cache             | Testing | High     | Done | 15 unit tests + 10 integration tests; 258 passed, 0 new failures |
+| S3-006 | Update HTTP API docs for new endpoints/fields      | Chore   | Medium   | Done | Document `archive` field in `/cleanup`, `cache_hit` field in `/parse` response, new env vars |
+| S3-007 | Update SRS and product backlog for Sprint 3 scope  | Chore   | Medium   | Done | Promote CPG cache from "Future Considerations" to implemented features; close PB-008 |
 
 ---
 
