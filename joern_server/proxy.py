@@ -1,3 +1,4 @@
+import datetime
 import hashlib
 import json
 import os
@@ -157,13 +158,147 @@ class LRUCache:
             }
 
 
+class CPGRegistry:
+    def __init__(self, registry_path: Path, archive_max_count: int = 100, archive_max_gb: float = 50.0):
+        self._path = registry_path
+        self._lock = threading.Lock()
+        self._data: dict[str, dict] = {}
+        self.archive_max_count = archive_max_count
+        self.archive_max_gb = archive_max_gb
+        self._loaded = False
+
+    def _ensure_loaded(self) -> None:
+        if self._loaded:
+            return
+        if not self._path.exists():
+            self._loaded = True
+            return
+        try:
+            raw = self._path.read_text(encoding="utf-8")
+            data = json.loads(raw)
+            if not isinstance(data, dict):
+                raise ValueError("registry not a dict")
+            cleaned: dict[str, dict] = {}
+            for k, v in data.items():
+                if isinstance(v, dict) and Path(v.get("archive_path", "")).exists():
+                    cleaned[k] = v
+                elif isinstance(v, dict):
+                    pass  # skip missing paths (self-healing)
+            self._data = cleaned
+        except Exception as exc:
+            print(
+                json.dumps({"component": "joern-proxy", "event": "registry_load_warning", "error": str(exc)}),
+                flush=True,
+            )
+            self._data = {}
+        self._loaded = True
+
+    def lookup(self, source_hash: str) -> Optional[dict]:
+        with self._lock:
+            self._ensure_loaded()
+            return self._data.get(source_hash)
+
+    def register(self, source_hash: str, entry: dict) -> None:
+        with self._lock:
+            self._ensure_loaded()
+            self._data[source_hash] = entry
+            self._save_locked()
+
+    def remove(self, source_hash: str) -> None:
+        with self._lock:
+            self._ensure_loaded()
+            self._data.pop(source_hash, None)
+            self._save_locked()
+
+    def all_entries(self) -> list:
+        with self._lock:
+            self._ensure_loaded()
+            return list(self._data.items())
+
+    def save(self) -> None:
+        with self._lock:
+            self._save_locked()
+
+    def _save_locked(self) -> None:
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
+            tmp.replace(self._path)
+        except Exception as exc:
+            print(
+                json.dumps({"component": "joern-proxy", "event": "registry_save_error", "error": str(exc)}),
+                flush=True,
+            )
+
+    def evict_if_needed(self) -> int:
+        evicted = 0
+        with self._lock:
+            self._ensure_loaded()
+            while True:
+                count = len(self._data)
+                total_bytes = sum(e.get("size_bytes", 0) for e in self._data.values())
+                total_gb = total_bytes / (1024 ** 3)
+                if count <= self.archive_max_count and total_gb <= self.archive_max_gb:
+                    break
+                if not self._data:
+                    break
+                lru_hash = min(self._data, key=lambda h: self._data[h].get("last_used", ""))
+                entry = self._data.pop(lru_hash)
+                archive_path = entry.get("archive_path", "")
+                if archive_path and Path(archive_path).exists():
+                    shutil.rmtree(archive_path, ignore_errors=True)
+                evicted += 1
+                print(
+                    json.dumps({
+                        "component": "joern-proxy",
+                        "event": "cpg_eviction",
+                        "source_hash": lru_hash,
+                        "archive_path": archive_path,
+                        "sample_id": entry.get("sample_id"),
+                    }),
+                    flush=True,
+                )
+            if evicted:
+                self._save_locked()
+        return evicted
+
+
+# Per-hash locks to prevent concurrent parses of the same source hash.
+_parse_hash_locks: dict[str, threading.Lock] = {}
+_parse_hash_locks_lock = threading.Lock()
+
+
+def _get_hash_lock(source_hash: str) -> threading.Lock:
+    with _parse_hash_locks_lock:
+        if source_hash not in _parse_hash_locks:
+            _parse_hash_locks[source_hash] = threading.Lock()
+        return _parse_hash_locks[source_hash]
+
+
+def _dir_size_bytes(path: Path) -> int:
+    total = 0
+    for f in path.rglob("*"):
+        if f.is_file():
+            try:
+                total += f.stat().st_size
+            except OSError:
+                pass
+    return total
+
+
 class JoernProxyHandler(BaseHTTPRequestHandler):
     internal_url: str = ""
     parse_bin: str = "/opt/joern/joern-cli/joern-parse"
     cpg_out_dir: str = "/workspace/cpg-out"
+    cpg_archive_dir: str = "/workspace/cpg-archive"
     parse_timeout_sec: int = 900
     query_timeout_sec: int = 600
     query_cache: Optional[LRUCache] = None
+    cpg_registry: Optional[CPGRegistry] = None
+    # Maps sample_id → source_hash for in-flight/recent parses (thread-safe via _sid_hash_lock)
+    _sid_to_hash: dict = {}
+    _sid_hash_lock: threading.Lock = threading.Lock()
 
     def _log_event(self, event: str, **fields: Any) -> None:
         payload: dict[str, Any] = {
@@ -284,11 +419,14 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
 
         sample_id = _safe_sample_id(sample_id_raw)
         cpg_out = Path(self.cpg_out_dir) / sample_id
+        source_hash = hashlib.sha256(source_code.encode("utf-8")).hexdigest()
+
         self._log_event(
             "parse_request",
             sample_id=sample_id,
             language=(language or None),
             overwrite=overwrite,
+            source_hash=source_hash,
         )
         if cpg_out.exists() and not overwrite:
             self._send_json(
@@ -302,58 +440,102 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
         if cpg_out.exists() and overwrite:
             shutil.rmtree(cpg_out, ignore_errors=True)
 
-        tmp_src_dir = Path(tempfile.mkdtemp(prefix=f"joern-src-{sample_id}-"))
-        try:
-            src_path = tmp_src_dir / Path(filename).name
-            src_path.write_text(source_code, encoding="utf-8", newline="\n")
-            cmd = [
-                self.parse_bin,
-                str(tmp_src_dir),
-                "--output",
-                str(cpg_out),
-            ]
-            if language:
-                cmd.extend(["--language", language])
+        # Store sample_id → source_hash mapping for archive-on-cleanup
+        with self.__class__._sid_hash_lock:
+            self.__class__._sid_to_hash[sample_id] = source_hash
 
-            proc = subprocess.run(
-                cmd,
-                text=True,
-                capture_output=True,
-                timeout=self.parse_timeout_sec,
-                check=False,
-            )
-            ok = proc.returncode == 0 and cpg_out.exists()
-            status = HTTPStatus.OK if ok else HTTPStatus.BAD_GATEWAY
-            self._log_event(
-                "parse_result",
-                sample_id=sample_id,
-                ok=ok,
-                return_code=proc.returncode,
-            )
-            self._send_json(
-                status,
-                {
-                    "ok": ok,
-                    "sample_id": sample_id,
-                    "cpg_path": str(cpg_out),
-                    "language": language or None,
-                    "return_code": proc.returncode,
-                    "stdout": proc.stdout[-100_000:],
-                    "stderr": proc.stderr[-100_000:],
-                },
-            )
-        except subprocess.TimeoutExpired:
-            self._send_json(
-                HTTPStatus.GATEWAY_TIMEOUT,
-                _json_error(
-                    f"joern-parse timed out after {self.parse_timeout_sec}s",
-                    code="parse_timeout",
-                ),
-            )
-        except Exception as e:
-            self._send_json(HTTPStatus.BAD_GATEWAY, _json_error(str(e), code="parse_failed"))
-        finally:
-            shutil.rmtree(tmp_src_dir, ignore_errors=True)
+        # Try cache hit (per-hash lock prevents double-parse on concurrent same-hash requests)
+        hash_lock = _get_hash_lock(source_hash)
+        with hash_lock:
+            if self.cpg_registry is not None:
+                entry = self.cpg_registry.lookup(source_hash)
+                if entry is not None:
+                    archive_path = Path(entry["archive_path"])
+                    if archive_path.exists():
+                        try:
+                            shutil.copytree(str(archive_path), str(cpg_out))
+                            now = datetime.datetime.utcnow().isoformat() + "Z"
+                            entry["last_used"] = now
+                            self.cpg_registry.register(source_hash, entry)
+                            self._log_event(
+                                "parse_result",
+                                sample_id=sample_id,
+                                ok=True,
+                                cache_hit=True,
+                                source_hash=source_hash,
+                            )
+                            self._send_json(
+                                HTTPStatus.OK,
+                                {
+                                    "ok": True,
+                                    "sample_id": sample_id,
+                                    "cpg_path": str(cpg_out),
+                                    "language": language or None,
+                                    "cache_hit": True,
+                                    "source_hash": source_hash,
+                                },
+                            )
+                            return
+                        except Exception:
+                            # Archive copy failed — fall through to full parse
+                            shutil.rmtree(cpg_out, ignore_errors=True)
+
+            tmp_src_dir = Path(tempfile.mkdtemp(prefix=f"joern-src-{sample_id}-"))
+            try:
+                src_path = tmp_src_dir / Path(filename).name
+                src_path.write_text(source_code, encoding="utf-8", newline="\n")
+                cmd = [
+                    self.parse_bin,
+                    str(tmp_src_dir),
+                    "--output",
+                    str(cpg_out),
+                ]
+                if language:
+                    cmd.extend(["--language", language])
+
+                proc = subprocess.run(
+                    cmd,
+                    text=True,
+                    capture_output=True,
+                    timeout=self.parse_timeout_sec,
+                    check=False,
+                )
+                ok = proc.returncode == 0 and cpg_out.exists()
+                status = HTTPStatus.OK if ok else HTTPStatus.BAD_GATEWAY
+                self._log_event(
+                    "parse_result",
+                    sample_id=sample_id,
+                    ok=ok,
+                    return_code=proc.returncode,
+                    cache_hit=False,
+                    source_hash=source_hash,
+                )
+                self._send_json(
+                    status,
+                    {
+                        "ok": ok,
+                        "sample_id": sample_id,
+                        "cpg_path": str(cpg_out),
+                        "language": language or None,
+                        "return_code": proc.returncode,
+                        "stdout": proc.stdout[-100_000:],
+                        "stderr": proc.stderr[-100_000:],
+                        "cache_hit": False,
+                        "source_hash": source_hash,
+                    },
+                )
+            except subprocess.TimeoutExpired:
+                self._send_json(
+                    HTTPStatus.GATEWAY_TIMEOUT,
+                    _json_error(
+                        f"joern-parse timed out after {self.parse_timeout_sec}s",
+                        code="parse_timeout",
+                    ),
+                )
+            except Exception as e:
+                self._send_json(HTTPStatus.BAD_GATEWAY, _json_error(str(e), code="parse_failed"))
+            finally:
+                shutil.rmtree(tmp_src_dir, ignore_errors=True)
 
     def _handle_cleanup(self) -> None:
         data, err = self._parse_request_json()
@@ -366,11 +548,54 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.BAD_REQUEST, _json_error("missing required field: sample_id"))
             return
 
+        archive_flag = bool(data.get("archive", False))
         sample_id = _safe_sample_id(sample_id_raw)
         cpg_out = Path(self.cpg_out_dir) / sample_id
         existed = cpg_out.exists()
-        self._log_event("cleanup_request", sample_id=sample_id, existed=bool(existed))
+        self._log_event("cleanup_request", sample_id=sample_id, existed=bool(existed), archive=archive_flag)
         try:
+            if archive_flag and existed and self.cpg_registry is not None:
+                # Resolve source_hash: check in-flight map first, then registry reverse lookup
+                source_hash: Optional[str] = None
+                with self.__class__._sid_hash_lock:
+                    source_hash = self.__class__._sid_to_hash.get(sample_id)
+                if source_hash is None:
+                    for h, entry in self.cpg_registry.all_entries():
+                        if entry.get("sample_id") == sample_id:
+                            source_hash = h
+                            break
+
+                if source_hash is not None:
+                    archive_path = Path(self.cpg_archive_dir) / source_hash
+                    archive_path.parent.mkdir(parents=True, exist_ok=True)
+                    if archive_path.exists():
+                        shutil.rmtree(archive_path, ignore_errors=True)
+                    shutil.copytree(str(cpg_out), str(archive_path))
+                    size_bytes = _dir_size_bytes(archive_path)
+                    now = datetime.datetime.utcnow().isoformat() + "Z"
+                    self.cpg_registry.register(source_hash, {
+                        "archive_path": str(archive_path),
+                        "sample_id": sample_id,
+                        "archived_at": now,
+                        "last_used": now,
+                        "size_bytes": size_bytes,
+                    })
+                    shutil.rmtree(cpg_out, ignore_errors=True)
+                    self.cpg_registry.evict_if_needed()
+                    self._send_json(
+                        HTTPStatus.OK,
+                        {
+                            "ok": True,
+                            "sample_id": sample_id,
+                            "cpg_path": str(cpg_out),
+                            "deleted": False,
+                            "archived": True,
+                            "source_hash": source_hash,
+                            "archive_path": str(archive_path),
+                        },
+                    )
+                    return
+                # source_hash unknown — fall through to delete
             if existed:
                 shutil.rmtree(cpg_out, ignore_errors=True)
             self._send_json(
@@ -380,6 +605,7 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
                     "sample_id": sample_id,
                     "cpg_path": str(cpg_out),
                     "deleted": bool(existed),
+                    "archived": False,
                 },
             )
         except Exception as e:
@@ -505,6 +731,9 @@ def main() -> None:
     internal_port = _env_int("JOERN_INTERNAL_PORT", 18080)
     parse_bin = _env_str("JOERN_PARSE_BIN", "/opt/joern/joern-cli/joern-parse")
     cpg_out_dir = _env_str("CPG_OUT_DIR", "/workspace/cpg-out")
+    cpg_archive_dir = _env_str("CPG_ARCHIVE_DIR", "/workspace/cpg-archive")
+    cpg_archive_max_count = _env_int("CPG_ARCHIVE_MAX_COUNT", 100)
+    cpg_archive_max_gb = _env_int("CPG_ARCHIVE_MAX_GB", 50)
     parse_timeout_sec = _env_int("JOERN_PARSE_TIMEOUT_SEC", 900)
     # Default aligns with training/agent --joern-timeout (600s); router HAProxy allows up to 3600s.
     query_timeout_sec = _env_int("JOERN_QUERY_TIMEOUT_SEC", 600)
@@ -516,11 +745,20 @@ def main() -> None:
     cache_ttl_sec = _env_int("QUERY_CACHE_TTL_SEC", 300)
     JoernProxyHandler.query_cache = LRUCache(max_size=cache_max_size, ttl_sec=cache_ttl_sec)
 
+    # CPG registry (hash → archive path)
+    registry_path = Path(cpg_out_dir).parent / "cpg-registry.json"
+    JoernProxyHandler.cpg_registry = CPGRegistry(
+        registry_path,
+        archive_max_count=cpg_archive_max_count,
+        archive_max_gb=float(cpg_archive_max_gb),
+    )
+
     JoernProxyHandler.internal_url = internal_url
     # One slot per proxy process: the internal Joern REPL is single-threaded.
     JoernProxyHandler.repl_semaphore = threading.Semaphore(1)
     JoernProxyHandler.parse_bin = parse_bin
     JoernProxyHandler.cpg_out_dir = cpg_out_dir
+    JoernProxyHandler.cpg_archive_dir = cpg_archive_dir
     JoernProxyHandler.parse_timeout_sec = parse_timeout_sec
     JoernProxyHandler.query_timeout_sec = query_timeout_sec
     httpd = ThreadingHTTPServer((proxy_host, proxy_port), JoernProxyHandler)
