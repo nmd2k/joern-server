@@ -407,6 +407,7 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
             return
 
         body = self._read_body()
+        t0 = time.perf_counter()
         try:
             query_class = "unknown"
             query_preview = ""
@@ -440,13 +441,13 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
                     self._send_json(HTTPStatus.OK, cached_result)
                     return
 
-            t0 = time.perf_counter()
-            resp = httpx.post(
-                self.internal_url,
-                content=body,
-                headers=_upstream_headers(self),
-                timeout=self.query_timeout_sec,
-            )
+            with self.repl_semaphore:
+                resp = httpx.post(
+                    self.internal_url,
+                    content=body,
+                    headers=_upstream_headers(self),
+                    timeout=self.query_timeout_sec,
+                )
             latency_ms = int((time.perf_counter() - t0) * 1000.0)
             # Preserve status and body; clients expect Joern's /query-sync JSON.
             resp_json = resp.json()
@@ -470,8 +471,25 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
                 cache_hit=False,
             )
             self._send_json(resp.status_code, resp_json)
+        except httpx.TimeoutException as e:
+            latency_ms = int((time.perf_counter() - t0) * 1000.0)
+            self._log_event(
+                "query_sync_error",
+                query_class=query_class,
+                latency_ms=latency_ms,
+                error_type="TimeoutException",
+                error=str(e),
+            )
+            self._send_json(HTTPStatus.GATEWAY_TIMEOUT, {"error": str(e)})
         except Exception as e:
-            self._log_event("query_sync_error", error=str(e))
+            latency_ms = int((time.perf_counter() - t0) * 1000.0)
+            self._log_event(
+                "query_sync_error",
+                query_class=query_class,
+                latency_ms=latency_ms,
+                error_type=type(e).__name__,
+                error=str(e),
+            )
             self._send_json(HTTPStatus.BAD_GATEWAY, {"error": str(e)})
 
     def log_message(self, fmt: str, *args) -> None:
@@ -499,6 +517,8 @@ def main() -> None:
     JoernProxyHandler.query_cache = LRUCache(max_size=cache_max_size, ttl_sec=cache_ttl_sec)
 
     JoernProxyHandler.internal_url = internal_url
+    # One slot per proxy process: the internal Joern REPL is single-threaded.
+    JoernProxyHandler.repl_semaphore = threading.Semaphore(1)
     JoernProxyHandler.parse_bin = parse_bin
     JoernProxyHandler.cpg_out_dir = cpg_out_dir
     JoernProxyHandler.parse_timeout_sec = parse_timeout_sec
