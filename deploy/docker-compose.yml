@@ -27,6 +27,10 @@ services:
       # MCP SSE server port.
       MCP_PORT: "${MCP_PUBLISH_PORT:-9000}"
       MCP_HOST: "0.0.0.0"
+      # CPG archive cache (Sprint 3): hash-based dedup, tag-based archiving, LRU disk eviction.
+      CPG_ARCHIVE_DIR: "${CPG_ARCHIVE_DIR:-/workspace/cpg-archive}"
+      CPG_ARCHIVE_MAX_COUNT: "${CPG_ARCHIVE_MAX_COUNT:-100}"
+      CPG_ARCHIVE_MAX_GB: "${CPG_ARCHIVE_MAX_GB:-50}"
     ulimits:
       nofile:
         soft: 65536

@@ -41,19 +41,6 @@ All compose files live here; run them from the **repository root** (paths like `
 | `docker-compose.haproxy-scale.yml` | N replicas behind HAProxy     | Multi-agent parallel runs (recommended)     |
 
 
-## Image status — read this first
-
-The Docker image (`neuralatlas-joern:local`) is a **pre-built artifact** on the deployment machine. It was originally built from `docker/Dockerfile`, which was removed during the repo migration. The image still exists locally and the stack runs from it.
-
-**This means:**
-- `docker compose … build` will fail because `docker/Dockerfile` is gone.
-- Running replicas contain the app code baked into the image at last-build time.
-- Code changes (e.g. `joern_server/proxy.py`) must be applied via [hot-patch](#applying-code-changes-without-rebuilding) until the Dockerfile is restored.
-
-See [Rebuilding the image](#rebuilding-the-image) if you need to do a full rebuild.
-
----
-
 ## Quick start
 
 ### Scaled deployment (recommended)
@@ -184,30 +171,19 @@ COMPOSE_PREFIX=prod ./deploy/hotpatch.sh
 
 ## Rebuilding the image
 
-The `docker/Dockerfile` was removed during the repo migration. To do a proper image rebuild:
+Do a full rebuild whenever you change `docker/Dockerfile`, `docker/unified-entrypoint.sh`, system dependencies, or Python package requirements. Code-only changes to `joern_server/` or `mcp-joern/` can use [hotpatch](#applying-code-changes-without-rebuilding) instead, which is faster.
 
-1. **Restore or recreate `docker/Dockerfile`** — inspect the running image to reconstruct it:
-   ```bash
-   # See base image and installed layers
-   docker history neuralatlas-joern:local --no-trunc | head -30
+```bash
+# From repo root — build the image:
+docker build -t neuralatlas-joern:local -f docker/Dockerfile .
+# or via compose:
+docker compose -f deploy/docker-compose.yml build
 
-   # Explore the container filesystem
-   docker run --rm -it neuralatlas-joern:local sh
-   ```
+# Redeploy (rolling restart — HAProxy routes around containers being recreated):
+docker compose -f deploy/docker-compose.haproxy-scale.yml up -d --scale joern=10
+```
 
-2. **Build** (once Dockerfile is restored at `docker/Dockerfile`):
-   ```bash
-   # From repo root:
-   docker compose -f deploy/docker-compose.yml build
-   # or for the scaled stack:
-   docker build -t neuralatlas-joern:local -f docker/Dockerfile .
-   ```
-
-3. **Redeploy** (rolling restart — HAProxy keeps traffic flowing):
-   ```bash
-   docker compose -f deploy/docker-compose.haproxy-scale.yml up -d --scale joern=10
-   ```
-   Docker Compose recreates containers one at a time; HAProxy routes around unhealthy ones during restart.
+Docker Compose recreates containers one at a time; HAProxy keeps routing to healthy replicas during the restart.
 
 ---
 
@@ -246,17 +222,20 @@ docker inspect <container> --format '{{.HostConfig.Memory}}'
 ## File reference
 
 
-| Path                                      | Role                                                          |
-| ----------------------------------------- | ------------------------------------------------------------- |
-| `docker/Dockerfile`                       | **MISSING** — removed during repo migration; needs restoring  |
-| `deploy/hotpatch.sh`                      | Hot-patch running containers with local code changes          |
-| `deploy/docker-compose.yml`               | Single instance compose                                       |
-| `deploy/docker-compose.router.yml`        | Single instance + HAProxy router                              |
-| `deploy/docker-compose.haproxy-scale.yml` | Scalable replicas + HAProxy                                   |
-| `deploy/haproxy-joern.cfg`                | HAProxy config for router compose                             |
-| `deploy/haproxy-joern-mcp-scale.cfg`      | HAProxy config for scaled compose                             |
-| `deploy/.env.example`                     | Environment template                                          |
-| `joern_server/proxy.py`                   | Python proxy (auth, `/parse`, `/cleanup`, CPG cache, timeout) |
-| `mcp-joern/server.py`                     | FastMCP server (MCP-over-SSE)                                 |
+| Path                                      | Role                                                                    |
+| ----------------------------------------- | ----------------------------------------------------------------------- |
+| `docker/Dockerfile`                       | Image build: Joern CLI, Python env, non-root user, entrypoints          |
+| `docker/unified-entrypoint.sh`            | Starts Joern server + proxy + MCP server inside the container           |
+| `docker/healthcheck.sh`                   | `/query-sync` liveness probe used by Docker and autoheal                |
+| `docker/entrypoint.sh`                    | Legacy standalone Joern-only entrypoint (not used in unified image)     |
+| `deploy/hotpatch.sh`                      | Push code changes into running containers without a full image rebuild   |
+| `deploy/docker-compose.yml`               | Single instance compose                                                 |
+| `deploy/docker-compose.router.yml`        | Single instance + HAProxy router                                        |
+| `deploy/docker-compose.haproxy-scale.yml` | Scalable replicas + HAProxy                                             |
+| `deploy/haproxy-joern.cfg`                | HAProxy config for router compose                                       |
+| `deploy/haproxy-joern-mcp-scale.cfg`      | HAProxy config for scaled compose                                       |
+| `deploy/.env.example`                     | Environment template                                                    |
+| `joern_server/proxy.py`                   | Python proxy (auth, `/parse`, `/cleanup`, CPG cache, timeout)           |
+| `mcp-joern/server.py`                     | FastMCP server (MCP-over-SSE)                                           |
 
 
