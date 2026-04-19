@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from joern_server.proxy import CPGRegistry, _dir_size_bytes, _get_hash_lock
+from joern_server.proxy import CPGRegistry, _cpg_size_bytes, _get_hash_lock
 
 
 class TestCPGRegistry:
@@ -160,7 +160,7 @@ class TestCPGRegistry:
         d.mkdir()
         (d / "f1").write_bytes(b"hello")
         (d / "f2").write_bytes(b"world!")
-        assert _dir_size_bytes(d) == 11
+        assert _cpg_size_bytes(d) == 11
 
     def test_get_hash_lock_same_hash_same_lock(self):
         lock1 = _get_hash_lock("samehash")

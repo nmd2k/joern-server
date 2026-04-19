@@ -247,7 +247,7 @@ class CPGRegistry:
                 entry = self._data.pop(lru_hash)
                 archive_path = entry.get("archive_path", "")
                 if archive_path and Path(archive_path).exists():
-                    shutil.rmtree(archive_path, ignore_errors=True)
+                    _cpg_remove(Path(archive_path))
                 evicted += 1
                 print(
                     json.dumps({
@@ -276,7 +276,27 @@ def _get_hash_lock(source_hash: str) -> threading.Lock:
         return _parse_hash_locks[source_hash]
 
 
-def _dir_size_bytes(path: Path) -> int:
+def _cpg_copy(src: Path, dst: Path) -> None:
+    """Copy a CPG — works for both file and directory layouts."""
+    if src.is_file():
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(src), str(dst))
+    else:
+        shutil.copytree(str(src), str(dst))
+
+
+def _cpg_remove(path: Path) -> None:
+    """Delete a CPG — works for both file and directory layouts."""
+    if path.is_file():
+        path.unlink(missing_ok=True)
+    else:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def _cpg_size_bytes(path: Path) -> int:
+    """Return byte size of a CPG path — works for both file and directory layouts."""
+    if path.is_file():
+        return path.stat().st_size
     total = 0
     for f in path.rglob("*"):
         if f.is_file():
@@ -438,7 +458,7 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
             )
             return
         if cpg_out.exists() and overwrite:
-            shutil.rmtree(cpg_out, ignore_errors=True)
+            _cpg_remove(cpg_out)
 
         # Store sample_id → source_hash mapping for archive-on-cleanup
         with self.__class__._sid_hash_lock:
@@ -453,7 +473,7 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
                     archive_path = Path(entry["archive_path"])
                     if archive_path.exists():
                         try:
-                            shutil.copytree(str(archive_path), str(cpg_out))
+                            _cpg_copy(archive_path, cpg_out)
                             now = datetime.datetime.utcnow().isoformat() + "Z"
                             entry["last_used"] = now
                             self.cpg_registry.register(source_hash, entry)
@@ -478,7 +498,7 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
                             return
                         except Exception:
                             # Archive copy failed — fall through to full parse
-                            shutil.rmtree(cpg_out, ignore_errors=True)
+                            _cpg_remove(cpg_out)
 
             tmp_src_dir = Path(tempfile.mkdtemp(prefix=f"joern-src-{sample_id}-"))
             try:
@@ -567,11 +587,10 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
 
                 if source_hash is not None:
                     archive_path = Path(self.cpg_archive_dir) / source_hash
-                    archive_path.parent.mkdir(parents=True, exist_ok=True)
                     if archive_path.exists():
-                        shutil.rmtree(archive_path, ignore_errors=True)
-                    shutil.copytree(str(cpg_out), str(archive_path))
-                    size_bytes = _dir_size_bytes(archive_path)
+                        _cpg_remove(archive_path)
+                    _cpg_copy(cpg_out, archive_path)
+                    size_bytes = _cpg_size_bytes(archive_path)
                     now = datetime.datetime.utcnow().isoformat() + "Z"
                     self.cpg_registry.register(source_hash, {
                         "archive_path": str(archive_path),
@@ -580,7 +599,7 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
                         "last_used": now,
                         "size_bytes": size_bytes,
                     })
-                    shutil.rmtree(cpg_out, ignore_errors=True)
+                    _cpg_remove(cpg_out)
                     self.cpg_registry.evict_if_needed()
                     self._send_json(
                         HTTPStatus.OK,
@@ -597,7 +616,7 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
                     return
                 # source_hash unknown — fall through to delete
             if existed:
-                shutil.rmtree(cpg_out, ignore_errors=True)
+                _cpg_remove(cpg_out)
             self._send_json(
                 HTTPStatus.OK,
                 {
