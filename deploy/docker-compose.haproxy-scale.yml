@@ -32,6 +32,7 @@ services:
       - ../ingest:/workspace/ingest:ro
       - joern-workspace:/workspace/joern-workspace
       - cpg-out:/workspace/cpg-out
+      - cpg-archive:/workspace/cpg-archive
     environment:
       JOERN_SERVER_HOST: "0.0.0.0"
       JOERN_INTERNAL_PORT: "${JOERN_INTERNAL_PORT:-18080}"
@@ -90,3 +91,4 @@ services:
 volumes:
   joern-workspace:
   cpg-out:
+  cpg-archive:

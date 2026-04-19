@@ -11,6 +11,7 @@ services:
       - ../ingest:/workspace/ingest:ro
       - joern-workspace:/workspace/joern-workspace
       - cpg-out:/workspace/cpg-out
+      - cpg-archive:/workspace/cpg-archive
     environment:
       JOERN_SERVER_HOST: "${JOERN_SERVER_HOST:-0.0.0.0}"
       # Internal Joern HTTP port (proxy listens on 8080 and forwards here).
@@ -61,3 +62,4 @@ services:
 volumes:
   joern-workspace:
   cpg-out:
+  cpg-archive:
