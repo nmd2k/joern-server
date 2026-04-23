@@ -294,3 +294,34 @@ def find_literals(
     query = "".join(parts)
     response = joern_remote(query)
     return extract_list(response)
+
+@joern_mcp.tool()
+def get_method_location(
+    method_id: Optional[str] = None,
+    method_full_name: Optional[str] = None,
+) -> str:
+    """Get file path and line/column range for a method. Required for file:line citations in vuln reports.
+    Provide either method_id or method_full_name.
+
+    @param method_id: Method node ID (Long string, e.g. '111669149702L')
+    @param method_full_name: Fully qualified method name (e.g. 'com.Foo.bar:void()')
+    @return: String 'file=<file> lineStart=<n> lineEnd=<n> columnStart=<n> columnEnd=<n>', or '' if not found
+    """
+    if not method_id and not method_full_name:
+        return "Error: provide either method_id or method_full_name"
+
+    map_expr = (
+        '.map(m => s"file=${m.filename} lineStart=${m.lineNumber.getOrElse(-1)}'
+        ' lineEnd=${m.lineNumberEnd.getOrElse(-1)} columnStart=${m.columnNumber.getOrElse(-1)}'
+        ' columnEnd=${m.columnNumberEnd.getOrElse(-1)}")'
+        '.headOption.getOrElse("")'
+    )
+
+    if method_id:
+        id_num = method_id.rstrip('L')
+        query = f'cpg.method.id({id_num})' + map_expr
+    else:
+        query = f'cpg.method.fullName("{method_full_name}")' + map_expr
+
+    response = joern_remote(query)
+    return extract_value(response) if response else ""
