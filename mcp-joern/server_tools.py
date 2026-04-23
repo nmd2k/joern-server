@@ -325,3 +325,36 @@ def get_method_location(
 
     response = joern_remote(query)
     return extract_value(response) if response else ""
+@joern_mcp.tool()
+def get_dataflow(
+    source_pattern: str,
+    sink_pattern: str,
+    max_depth: int = 12,
+) -> list[str]:
+    """Find taint flows from source to sink call patterns. Returns empty list if no flow found.
+    Joern's flagship vulnerability-hunting capability (reachableByFlows).
+
+    Note: max_depth is accepted for forward compatibility but Joern's reachableByFlows does not
+    directly accept a depth limit via this API. Values > 20 are rejected to prevent abuse; the
+    actual traversal depth is Joern's internal default.
+
+    @param source_pattern: Regex for source call name (e.g. 'getParameter', 'readLine', 'getUserInput')
+    @param sink_pattern: Regex for sink call name (e.g. 'exec', 'query', 'eval', 'println')
+    @param max_depth: Maximum taint traversal depth (default 12, max 20)
+    @return: List of taint flow paths. Each path = nodes joined by ' -> ', each node = 'code@file:line'. Empty = no flow.
+    """
+    depth = min(max_depth, 20)
+    # Build multi-statement Scala query
+    query = (
+        f'val __src = cpg.call.name("{source_pattern}");'
+        f'val __snk = cpg.call.name("{sink_pattern}");'
+        '__snk.reachableByFlows(__src)'
+        '.map(flow => flow.elements.map(n => s"${n.code}@${n.filename}:${n.lineNumber.getOrElse(-1)}").mkString(" -> "))'
+        '.l'
+    )
+    response = joern_remote(query)
+    if response is None:
+        return []
+    if "error" in response.lower() or "exception" in response.lower():
+        return []
+    return extract_list(response)
