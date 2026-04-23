@@ -1,0 +1,362 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Joern MCP tools bundle",
+  "description": "MCP tool list with JSON Schema (inputSchema) per tool, from joern-mcp FastMCP.",
+  "mcpServerName": "joern",
+  "tools": [
+    {
+      "name": "get_call_code_by_id",
+      "description": "Get the source code of a specific call node from the loaded CPG by the call id\n    \n    @param id: The unique identifier of the call node, the id is a Long int string, like '111669149702L'\n    @return: The source code of the specified call\n    ",
+      "inputSchema": {
+        "properties": {
+          "code_id": {
+            "title": "Code Id",
+            "type": "string"
+          }
+        },
+        "required": ["code_id"],
+        "title": "get_call_code_by_idArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_calls_in_method_by_method_full_name",
+      "description": "Get the calls info by the method full name which the call is in the method\n\n    @param method_full_name: The full name of the method\n    @return: The calls info of the method\n    ",
+      "inputSchema": {
+        "properties": {
+          "method_full_name": {
+            "title": "Method Full Name",
+            "type": "string"
+          }
+        },
+        "required": ["method_full_name"],
+        "title": "get_calls_in_method_by_method_full_nameArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_class_full_name_by_id",
+      "description": "Retrieves the fully name of a class by its ID\n    \n    @param id: The unique identifier of the class (typeDecl), the id is a Long int string, like '111669149702L'\n    @return: The fully name of the class (e.g., com.android.nfc.NfcService$6)\n    ",
+      "inputSchema": {
+        "properties": {
+          "class_id": {
+            "title": "Class Id",
+            "type": "string"
+          }
+        },
+        "required": ["class_id"],
+        "title": "get_class_full_name_by_idArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_class_methods_by_class_full_name",
+      "description": "Get the methods of a class by its fully qualified name\n  \n    @param class_full_name: The fully qualified name of the class\n    @return: List of full name, name, signature and id of methods in the class\n    ",
+      "inputSchema": {
+        "properties": {
+          "class_full_name": {
+            "title": "Class Full Name",
+            "type": "string"
+          }
+        },
+        "required": ["class_full_name"],
+        "title": "get_class_methods_by_class_full_nameArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_derived_classes_by_class_full_name",
+      "description": "Get the derived classes of a class\n    \n    @param class_full_name: The fully qualified name of the class\n    @return: The derived classes info of the class, including the full name, name and id\n    ",
+      "inputSchema": {
+        "properties": {
+          "class_full_name": {
+            "title": "Class Full Name",
+            "type": "string"
+          }
+        },
+        "required": ["class_full_name"],
+        "title": "get_derived_classes_by_class_full_nameArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_method_by_call_id",
+      "description": "Get the method info by the call id which the call is in the method\n  \n    @param id: The id of the call\n    @return: The method info of the call\n    ",
+      "inputSchema": {
+        "properties": {
+          "call_id": {
+            "title": "Call Id",
+            "type": "string"
+          }
+        },
+        "required": ["call_id"],
+        "title": "get_method_by_call_idArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_method_callees",
+      "description": "Retrieves a list of methods info that are called by the specified method\n    \n   @param method_full_name: The fully qualified name of the source method(e.g., com.android.nfc.NfcService$6.onReceive:void(android.content.Context,android.content.Intent))\n   @return: List of full name, name, signature and id of methods which call the source method\n    ",
+      "inputSchema": {
+        "properties": {
+          "method_full_name": {
+            "title": "Method Full Name",
+            "type": "string"
+          }
+        },
+        "required": ["method_full_name"],
+        "title": "get_method_calleesArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_method_callers",
+      "description": "Retrieves a list of methods that call the specified method\n    \n    @param method_full_name: The fully qualified name of the source method(e.g., com.android.nfc.NfcService$6.onReceive:void(android.content.Context,android.content.Intent))\n    @return: List of full name, name, signature and id of methods called by the source method\n    ",
+      "inputSchema": {
+        "properties": {
+          "method_full_name": {
+            "title": "Method Full Name",
+            "type": "string"
+          }
+        },
+        "required": ["method_full_name"],
+        "title": "get_method_callersArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_method_code_by_class_full_name_and_method_name",
+      "description": "Get the code of a method by its class full name and method name,\n    this tool is usually used when you don't know the full name of the method, but you know the full name of the class and the name of the method. If there are multiple methods with the same name in the class, the code of all methods will be returned.\n  \n    @param class_full_name: The fully qualified name of the class, like 'com.android.nfc.NfcService'\n    @param method_name: The name of the method, like 'onReceive'\n    @return: List of full name, name, signature and id of methods in the class\n    ",
+      "inputSchema": {
+        "properties": {
+          "class_full_name": {
+            "title": "Class Full Name",
+            "type": "string"
+          },
+          "method_name": {
+            "title": "Method Name",
+            "type": "string"
+          }
+        },
+        "required": ["class_full_name", "method_name"],
+        "title": "get_method_code_by_class_full_name_and_method_nameArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_method_code_by_full_name",
+      "description": "Get the code of a method by its fully name, If you know the full name of the method, you can use this tool to get the method code directly. \n    If you only know the full name of the class and the name of the method, you should use get_method_code_by_class_full_name_and_method_name\n    @param method_full_name: The fully qualified name of the method (e.g., com.android.nfc.NfcService$6.onReceive:void(android.content.Context,android.content.Intent))\n    @return: The source code of the specified method\n    ",
+      "inputSchema": {
+        "properties": {
+          "method_full_name": {
+            "title": "Method Full Name",
+            "type": "string"
+          }
+        },
+        "required": ["method_full_name"],
+        "title": "get_method_code_by_full_nameArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_method_code_by_id",
+      "description": "Get the code of a method by its class full name and method name\n  \n    @param class_full_name: The fully qualified name of the class\n    @param method_name: The name of the method\n    @return: List of full name, name, signature and id of methods in the class\n    ",
+      "inputSchema": {
+        "properties": {
+          "method_id": {
+            "title": "Method Id",
+            "type": "string"
+          }
+        },
+        "required": ["method_id"],
+        "title": "get_method_code_by_idArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_method_full_name_by_id",
+      "description": "Retrieves the fully qualified name of a method by its ID\n    \n    @param id: The unique identifier of the method, the id is a Long int string, like '111669149702L'\n    @return: The fully qualified name of the method (e.g., com.android.nfc.NfcService$6.onReceive:void(android.content.Context,android.content.Intent))\n    ",
+      "inputSchema": {
+        "properties": {
+          "method_id": {
+            "title": "Method Id",
+            "type": "string"
+          }
+        },
+        "required": ["method_id"],
+        "title": "get_method_full_name_by_idArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_parent_classes_by_class_full_name",
+      "description": "Get the parent classes of a class\n    \n    @param class_full_name: The fully qualified name of the class\n    @return: The parent classes info of the class, including the full name, name and id\n    ",
+      "inputSchema": {
+        "properties": {
+          "class_full_name": {
+            "title": "Class Full Name",
+            "type": "string"
+          }
+        },
+        "required": ["class_full_name"],
+        "title": "get_parent_classes_by_class_full_nameArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_referenced_method_full_name_by_call_id",
+      "description": "Get the method info by the call id which the call is referenced the method\n    \n    @param id: The id of the call\n    @return: The method info of the call\n    ",
+      "inputSchema": {
+        "properties": {
+          "call_id": {
+            "title": "Call Id",
+            "type": "string"
+          }
+        },
+        "required": ["call_id"],
+        "title": "get_referenced_method_full_name_by_call_idArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "ping",
+      "description": "Checks if the Joern server is running and responsive by querying its version\n    \n    @return: The Joern server version if successful, 'Query Failed' if the server is not responding\n    ",
+      "inputSchema": {
+        "properties": {},
+        "title": "pingArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "find_methods",
+      "description": "Find methods globally by name/annotation/modifier/full-name pattern.\n    At least one filter is required. Returns id, name, fullName, file, lineStart per method.\n    \n    @param name_pattern: Regex for method simple name (e.g. 'get.*', 'onReceive')\n    @param annotation: Annotation name to filter by (e.g. 'RequestMapping', 'Override')\n    @param modifier: Modifier type (e.g. 'public', 'static', 'private')\n    @param full_name_pattern: Regex for method fully qualified name\n    @return: List of strings formatted as 'id=<id>L name=<name> fullName=<fullName> file=<file> lineStart=<line>'\n    ",
+      "inputSchema": {
+        "properties": {
+          "name_pattern": {
+            "anyOf": [{"type": "string"}, {"type": "null"}],
+            "default": null,
+            "title": "Name Pattern"
+          },
+          "annotation": {
+            "anyOf": [{"type": "string"}, {"type": "null"}],
+            "default": null,
+            "title": "Annotation"
+          },
+          "modifier": {
+            "anyOf": [{"type": "string"}, {"type": "null"}],
+            "default": null,
+            "title": "Modifier"
+          },
+          "full_name_pattern": {
+            "anyOf": [{"type": "string"}, {"type": "null"}],
+            "default": null,
+            "title": "Full Name Pattern"
+          }
+        },
+        "required": [],
+        "title": "find_methodsArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "find_calls",
+      "description": "Find call sites globally by callee name pattern. Useful for sink enumeration (exec, query, eval).\n    \n    @param callee_name_pattern: Regex for the callee method name (e.g. 'exec', 'query', 'eval', 'Runtime.*')\n    @param method_full_name_pattern: Optional regex to restrict caller scope by containing method full name\n    @return: List of strings formatted as 'callId=<id>L calleeName=<name> containingMethod=<fullName> file=<file> line=<line>'\n    ",
+      "inputSchema": {
+        "properties": {
+          "callee_name_pattern": {
+            "title": "Callee Name Pattern",
+            "type": "string"
+          },
+          "method_full_name_pattern": {
+            "anyOf": [{"type": "string"}, {"type": "null"}],
+            "default": null,
+            "title": "Method Full Name Pattern"
+          }
+        },
+        "required": ["callee_name_pattern"],
+        "title": "find_callsArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_dataflow",
+      "description": "Find taint flows from source to sink call patterns. Returns empty list if no flow found.\n    Joern's flagship vulnerability-hunting capability (reachableByFlows).\n\n    Note: max_depth is accepted for forward compatibility but Joern's reachableByFlows does not\n    directly accept a depth limit via this API. Values > 20 are rejected to prevent abuse.\n\n    @param source_pattern: Regex for source call name (e.g. 'getParameter', 'readLine', 'getUserInput')\n    @param sink_pattern: Regex for sink call name (e.g. 'exec', 'query', 'eval', 'println')\n    @param max_depth: Maximum taint traversal depth (default 12, max 20)\n    @return: List of taint flow paths. Each path = nodes joined by ' -> ', each node = 'code@file:line'. Empty = no flow.\n    ",
+      "inputSchema": {
+        "properties": {
+          "source_pattern": {
+            "title": "Source Pattern",
+            "type": "string"
+          },
+          "sink_pattern": {
+            "title": "Sink Pattern",
+            "type": "string"
+          },
+          "max_depth": {
+            "default": 12,
+            "title": "Max Depth",
+            "type": "integer"
+          }
+        },
+        "required": ["source_pattern", "sink_pattern"],
+        "title": "get_dataflowArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_call_arguments",
+      "description": "Get structured arguments for a call node by its ID.\n    Useful for determining which arguments are user-controlled vs literal.\n    \n    @param call_id: The call node ID (Long string, e.g. '111669149702L')\n    @return: List of strings formatted as 'argIndex=<n> code=<code> typeFullName=<type> nodeId=<id>L'\n    ",
+      "inputSchema": {
+        "properties": {
+          "call_id": {
+            "title": "Call Id",
+            "type": "string"
+          }
+        },
+        "required": ["call_id"],
+        "title": "get_call_argumentsArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "find_literals",
+      "description": "Search for string/numeric literals in the CPG by value pattern.\n    Useful for finding hardcoded credentials, SQL fragments, API keys, magic numbers.\n    \n    @param pattern: Regex matched against the literal value (e.g. 'password', 'SELECT.*FROM', 'secret')\n    @param literal_type: Filter by type: 'string', 'int', or 'any' (default 'any')\n    @return: List of strings formatted as 'literalId=<id>L value=<value> typeFullName=<type> containingMethod=<method> file=<file> line=<line>'\n    ",
+      "inputSchema": {
+        "properties": {
+          "pattern": {
+            "title": "Pattern",
+            "type": "string"
+          },
+          "literal_type": {
+            "default": "any",
+            "title": "Literal Type",
+            "type": "string"
+          }
+        },
+        "required": ["pattern"],
+        "title": "find_literalsArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_method_location",
+      "description": "Get file path and line/column range for a method. Required for file:line citations in vuln reports.\n    Provide either method_id or method_full_name.\n    \n    @param method_id: Method node ID (Long string, e.g. '111669149702L')\n    @param method_full_name: Fully qualified method name (e.g. 'com.Foo.bar:void()')\n    @return: String 'file=<file> lineStart=<n> lineEnd=<n> columnStart=<n> columnEnd=<n>', or '' if not found\n    ",
+      "inputSchema": {
+        "properties": {
+          "method_id": {
+            "anyOf": [{"type": "string"}, {"type": "null"}],
+            "default": null,
+            "title": "Method Id"
+          },
+          "method_full_name": {
+            "anyOf": [{"type": "string"}, {"type": "null"}],
+            "default": null,
+            "title": "Method Full Name"
+          }
+        },
+        "required": [],
+        "title": "get_method_locationArguments",
+        "type": "object"
+      }
+    }
+  ]
+}
