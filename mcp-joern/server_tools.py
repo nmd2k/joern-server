@@ -193,3 +193,104 @@ def get_calls_in_method_by_method_full_name(method_full_name:str) -> list[str]:
     """
     response = joern_remote(f'get_calls_in_method_by_method_full_name("{method_full_name}")')
     return extract_list(response)
+
+@joern_mcp.tool()
+def find_methods(
+    name_pattern: Optional[str] = None,
+    annotation: Optional[str] = None,
+    modifier: Optional[str] = None,
+    full_name_pattern: Optional[str] = None,
+) -> list[str]:
+    """Find methods globally by name/annotation/modifier/full-name pattern.
+    At least one filter is required. Returns id, name, fullName, file, lineStart per method.
+
+    @param name_pattern: Regex for method simple name (e.g. 'get.*', 'onReceive')
+    @param annotation: Annotation name to filter by (e.g. 'RequestMapping', 'Override')
+    @param modifier: Modifier type (e.g. 'public', 'static', 'private')
+    @param full_name_pattern: Regex for method full qualified name
+    @return: List of strings formatted as 'id=<id>L name=<name> fullName=<fullName> file=<file> lineStart=<line>'
+    """
+    if not any([name_pattern, annotation, modifier, full_name_pattern]):
+        return ["Error: at least one filter (name_pattern, annotation, modifier, full_name_pattern) is required"]
+
+    parts = ["cpg.method"]
+    if name_pattern:
+        parts.append(f'.name("{name_pattern}")')
+    if full_name_pattern:
+        parts.append(f'.fullName("{full_name_pattern}")')
+    if annotation:
+        parts.append(f'.where(_.annotation.name("{annotation}"))')
+    if modifier:
+        parts.append(f'.where(_.modifier.modifierType("{modifier.upper()}"))')
+    parts.append(
+        '.map(m => s"id=${m.id}L name=${m.name} fullName=${m.fullName}'
+        ' file=${m.filename} lineStart=${m.lineNumber.getOrElse(-1)}").l'
+    )
+    query = "".join(parts)
+    response = joern_remote(query)
+    return extract_list(response)
+
+@joern_mcp.tool()
+def find_calls(
+    callee_name_pattern: str,
+    method_full_name_pattern: Optional[str] = None,
+) -> list[str]:
+    """Find call sites globally by callee name pattern. Useful for sink enumeration (exec, query, eval).
+
+    @param callee_name_pattern: Regex for the callee method name (e.g. 'exec', 'query', 'eval', 'Runtime.*')
+    @param method_full_name_pattern: Optional regex to restrict caller scope by containing method full name
+    @return: List of strings formatted as 'callId=<id>L calleeName=<name> containingMethod=<fullName> file=<file> line=<line>'
+    """
+    parts = [f'cpg.call.name("{callee_name_pattern}")']
+    if method_full_name_pattern:
+        parts.append(f'.where(_.method.fullName("{method_full_name_pattern}"))')
+    parts.append(
+        '.map(c => s"callId=${c.id}L calleeName=${c.name}'
+        ' containingMethod=${c.method.fullName.headOption.getOrElse("")}'
+        ' file=${c.filename} line=${c.lineNumber.getOrElse(-1)}").l'
+    )
+    query = "".join(parts)
+    response = joern_remote(query)
+    return extract_list(response)
+
+@joern_mcp.tool()
+def get_call_arguments(call_id: str) -> list[str]:
+    """Get structured arguments for a call node by its ID.
+    Useful for determining which arguments are user-controlled vs literal.
+
+    @param call_id: The call node ID (Long string, e.g. '111669149702L')
+    @return: List of strings formatted as 'argIndex=<n> code=<code> typeFullName=<type> nodeId=<id>L'
+    """
+    id_num = call_id.rstrip('L')
+    query = (
+        f'cpg.call.id({id_num}).argument'
+        '.map(a => s"argIndex=${a.order} code=${a.code} typeFullName=${a.typeFullName} nodeId=${a.id}L").l'
+    )
+    response = joern_remote(query)
+    return extract_list(response)
+
+@joern_mcp.tool()
+def find_literals(
+    pattern: str,
+    literal_type: str = "any",
+) -> list[str]:
+    """Search for string/numeric literals in the CPG by value pattern.
+    Useful for finding hardcoded credentials, SQL fragments, API keys, magic numbers.
+
+    @param pattern: Regex matched against the literal value (e.g. 'password', 'SELECT.*FROM', 'secret')
+    @param literal_type: Filter by type: 'string', 'int', or 'any' (default 'any')
+    @return: List of strings formatted as 'literalId=<id>L value=<value> typeFullName=<type> containingMethod=<method> file=<file> line=<line>'
+    """
+    parts = [f'cpg.literal.code("{pattern}")']
+    if literal_type == "string":
+        parts.append('.where(_.typeFullName(".*[Ss]tring.*"))')
+    elif literal_type == "int":
+        parts.append('.where(_.typeFullName(".*[Ii]nt.*|.*[Ll]ong.*|byte|short"))')
+    parts.append(
+        '.map(l => s"literalId=${l.id}L value=${l.code} typeFullName=${l.typeFullName}'
+        ' containingMethod=${l.method.fullName.headOption.getOrElse("")}'
+        ' file=${l.filename} line=${l.lineNumber.getOrElse(-1)}").l'
+    )
+    query = "".join(parts)
+    response = joern_remote(query)
+    return extract_list(response)
