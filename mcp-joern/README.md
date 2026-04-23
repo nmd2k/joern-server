@@ -130,7 +130,7 @@ pytest
 The scripts in `mcp-joern/tests/` are deprecated. Use the consolidated
 test suite in `../tests/` instead.
 
-### Functional test (all 18 MCP tools)
+### Functional test (all 21 MCP tools)
 
 ```bash
 python tests/integration/test_mcp_functional.py \
@@ -148,6 +148,7 @@ Options:
 
 ## Tool reference
 
+### Navigation (15 tools)
 
 | Tool                                                 | Description                               |
 | ---------------------------------------------------- | ----------------------------------------- |
@@ -169,6 +170,19 @@ Options:
 | `get_class_full_name_by_id`                          | Class full name from node ID              |
 | `get_derived_classes_by_class_full_name`             | Subclasses of a type                      |
 | `get_parent_classes_by_class_full_name`              | Supertypes of a type                      |
+
+### Vulnerability Hunting (6 tools — Sprint 4)
+
+Added to unblock agentic vuln-hunting workflows on CASTLE/SVEN benchmarks (NeuralAtlas feature request).
+
+| Tool                    | Description                                                                   |
+| ----------------------- | ----------------------------------------------------------------------------- |
+| `find_methods`          | Global method search by name/annotation/modifier/fullName pattern             |
+| `find_calls`            | Global call-site search by callee pattern — sink enumeration                  |
+| `get_dataflow`          | Taint reachability from source to sink (`reachableByFlows`) — returns flows   |
+| `get_call_arguments`    | Structured argument list for a call node (argIndex, code, type, nodeId)       |
+| `find_literals`         | Search string/int literals by regex — hardcoded creds, SQL fragments, secrets |
+| `get_method_location`   | File path + line/column range for any method — required for vuln citations    |
 
 
 ## Development
