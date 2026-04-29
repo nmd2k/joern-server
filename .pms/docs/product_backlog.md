@@ -56,7 +56,7 @@
 | PB-040 | MCP tool ↔ CPGQL translation table for playground                            | Feature | High     | Done      | 5      | 25 tools with CPGQL translation in tool-definitions.js; escapeCPGQL helper. |
 | PB-041 | Default filename `snippet.txt` causes empty CPG for C/C++ parsing             | Bug     | High     | Done      | 5-hotfix | `c2cpg` silently skips `.txt` files. Fix: `_LANGUAGE_EXT` mapping → `snippet.c` for C, `snippet.cpp` for C++, etc. See S5-HF01. |
 | PB-042 | Strip ANSI escape codes from /query-sync stdout in proxy                      | Bug     | Medium   | Done      | 5-hotfix | Joern REPL wraps stdout in terminal color codes. Fix: `_strip_ansi()` applied to stdout field only (no schema change). See S5-HF02. |
-| PB-043 | Web playground: interactive CPG visualization (CFG, DFG)                      | Feature | Medium   | Open     | 6      | Client request: render subgraphs (control-flow, data-flow) in-browser for debugging. Explore cytoscape.js or vis.js. |
+| PB-043 | Web playground: interactive CPG visualization (CFG, DFG)                      | Feature | High     | In Sprint     | 6      | Client request: render subgraphs (control-flow, data-flow) in-browser for debugging. Explore cytoscape.js or vis.js. |
 
 
 ---
