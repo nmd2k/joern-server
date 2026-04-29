@@ -26,6 +26,12 @@ if (!fs.existsSync(PLAYGROUND_DIR)) {
 
 app.use('/playground', express.static(PLAYGROUND_DIR));
 
+// Serve standalone graph page at /graph
+app.get('/graph', (req, res) => {
+  res.sendFile(path.join(PLAYGROUND_DIR, 'graph', 'index.html'));
+});
+app.use('/graph', express.static(path.join(PLAYGROUND_DIR, 'graph')));
+
 // ── 2. Proxy /api/* to Joern proxy ────────────────────────
 const apiProxy = createProxyMiddleware({
   target: JOERN_PROXY_URL,

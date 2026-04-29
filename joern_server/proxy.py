@@ -193,6 +193,192 @@ def _json_error(msg: str, *, code: str = "bad_request") -> dict[str, str]:
     return {"error": msg, "code": code}
 
 
+def _extract_scala_tuples(stdout: str) -> list[str]:
+    """Extract individual tuple strings from Scala `List(...)` output."""
+    if not stdout:
+        return []
+    # Find "= List(" — the value list, skipping the type-annotation List(...)
+    idx = stdout.find("= List(")
+    if idx != -1:
+        content_start = idx + 7
+    else:
+        idx = stdout.find("List(")
+        if idx == -1:
+            return []
+        content_start = idx + 5
+    depth = 1
+    pos = content_start
+    while pos < len(stdout) and depth > 0:
+        if stdout[pos] == "(":
+            depth += 1
+        elif stdout[pos] == ")":
+            depth -= 1
+        pos += 1
+    content = stdout[content_start:pos - 1]
+    tuples: list[str] = []
+    i = 0
+    while i < len(content):
+        if content[i] == "(":
+            d = 1
+            j = i + 1
+            while j < len(content) and d > 0:
+                if content[j] == "(":
+                    d += 1
+                elif content[j] == ")":
+                    d -= 1
+                j += 1
+            if d == 0:
+                tuples.append(content[i:j])
+                i = j
+                continue
+        i += 1
+    return tuples
+
+
+def _split_scala_tuple(tuple_str: str) -> list[str]:
+    """Split a Scala tuple string by top-level commas into fields."""
+    inner = tuple_str[1:-1] if tuple_str.startswith("(") and tuple_str.endswith(")") else tuple_str
+    fields: list[str] = []
+    current: list[str] = []
+    depth = 0
+    in_string = False
+    escaped = False
+    i = 0
+    while i < len(inner):
+        ch = inner[i]
+        if escaped:
+            current.append(ch)
+            escaped = False
+            i += 1
+            continue
+        if ch == "\\":
+            current.append(ch)
+            escaped = True
+            i += 1
+            continue
+        if ch == '"':
+            in_string = not in_string
+            current.append(ch)
+            i += 1
+            continue
+        if in_string:
+            current.append(ch)
+            i += 1
+            continue
+        if ch in "([{":
+            depth += 1
+            current.append(ch)
+            i += 1
+            continue
+        if ch in ")]}":
+            depth -= 1
+            current.append(ch)
+            i += 1
+            continue
+        if ch == "," and depth == 0:
+            fields.append("".join(current).strip())
+            current = []
+            i += 1
+            continue
+        current.append(ch)
+        i += 1
+    if current:
+        fields.append("".join(current).strip())
+    return fields
+
+
+def _parse_scala_field(field: str):
+    """Parse a single Scala value (string, int, Some(x), None) into Python."""
+    field = field.strip()
+    if not field:
+        return None
+    if field.startswith('"') and field.endswith('"') and len(field) >= 2:
+        inner = field[1:-1]
+        return inner.replace('\\"', '"').replace("\\\\", "\\")
+    if field == "None":
+        return None
+    if field.startswith("Some(") and field.endswith(")"):
+        inner_val = field[5:-1].strip()
+        try:
+            return int(inner_val)
+        except ValueError:
+            return inner_val
+    try:
+        return int(field)
+    except ValueError:
+        return field
+
+
+def _parse_metadata_tuples(stdout: str) -> dict[str, dict]:
+    """Parse 7-field metadata tuples from Joern stdout into {nodeId: metadata}."""
+    metadata: dict[str, dict] = {}
+    for t in _extract_scala_tuples(stdout):
+        fields = _split_scala_tuple(t)
+        if len(fields) < 7:
+            continue
+        try:
+            fid = _parse_scala_field(fields[0])
+            code = _parse_scala_field(fields[1])
+            line_num = _parse_scala_field(fields[2])
+            col_num = _parse_scala_field(fields[3])
+            order = _parse_scala_field(fields[4])
+            arg_idx = _parse_scala_field(fields[5])
+            node_type = _parse_scala_field(fields[6])
+            metadata[str(fid)] = {
+                "code": code if isinstance(code, str) else str(code) if code is not None else "",
+                "line_number": line_num,
+                "column_number": col_num,
+                "order": order if order is not None else -1,
+                "argument_index": arg_idx if arg_idx is not None else -1,
+                "node_type": node_type if isinstance(node_type, str) else "",
+            }
+        except Exception:
+            continue
+    return metadata
+
+
+def _parse_ast_tuples(stdout: str) -> tuple[list[dict], list[dict], dict[str, dict]]:
+    """Parse 8-field AST tuples into (nodes, edges, metadata)."""
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    metadata: dict[str, dict] = {}
+    for t in _extract_scala_tuples(stdout):
+        fields = _split_scala_tuple(t)
+        if len(fields) < 8:
+            continue
+        try:
+            fid = _parse_scala_field(fields[0])
+            code = _parse_scala_field(fields[1])
+            line_num = _parse_scala_field(fields[2])
+            col_num = _parse_scala_field(fields[3])
+            order = _parse_scala_field(fields[4])
+            arg_idx = _parse_scala_field(fields[5])
+            node_type = _parse_scala_field(fields[6])
+            parent_id = _parse_scala_field(fields[7])
+            node_id_str = str(fid)
+            nodes.append({
+                "id": node_id_str,
+                "label": node_type if isinstance(node_type, str) else str(node_type) if node_type is not None else "",
+            })
+            metadata[node_id_str] = {
+                "code": code if isinstance(code, str) else str(code) if code is not None else "",
+                "line_number": line_num,
+                "column_number": col_num,
+                "order": order if order is not None else -1,
+                "argument_index": arg_idx if arg_idx is not None else -1,
+                "node_type": node_type if isinstance(node_type, str) else "",
+            }
+            if parent_id is not None:
+                edges.append({
+                    "source": str(parent_id),
+                    "target": node_id_str,
+                    "label": "",
+                })
+        except Exception:
+            continue
+    return nodes, edges, metadata
+
+
 class LRUCache:
     """Thread-safe LRU cache with TTL support for query result caching.
 
@@ -771,6 +957,58 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json(HTTPStatus.BAD_GATEWAY, _json_error(str(e), code="cleanup_failed"))
 
+    def _fetch_node_metadata(self, node_ids: list[str]) -> dict[str, dict]:
+        """Batch-fetch metadata for a list of node IDs from Joern.
+
+        Returns a dict mapping node id (str) to metadata dict.
+        Falls back to empty dict on any failure.
+        """
+        if not node_ids:
+            return {}
+        numeric_ids: list[int] = []
+        for nid in node_ids:
+            try:
+                numeric_ids.append(int(nid))
+            except (ValueError, TypeError):
+                pass
+        if not numeric_ids:
+            return {}
+
+        metadata: dict[str, dict] = {}
+        max_batch = 50
+
+        for i in range(0, len(numeric_ids), max_batch):
+            batch = numeric_ids[i:i + max_batch]
+            id_list = ", ".join(str(nid) for nid in batch)
+            query = (
+                f"cpg.all.id({id_list}).map(n =>"
+                f" (n.id, n.code, n.lineNumber, n.columnNumber,"
+                f" n.order, n.argumentIndex, n.label)"
+                f").l"
+            )
+            try:
+                with self.repl_semaphore:
+                    resp = httpx.post(
+                        self.internal_url,
+                        json={"query": query},
+                        headers=_upstream_headers(self),
+                        timeout=self.query_timeout_sec,
+                    )
+                resp.raise_for_status()
+                resp_json = resp.json()
+                success = resp_json.get("success", True)
+                if isinstance(success, str):
+                    success = success.strip().lower() in ("true", "1", "yes")
+                if not success:
+                    continue
+                stdout = resp_json.get("stdout", "")
+                batch_meta = _parse_metadata_tuples(stdout)
+                metadata.update(batch_meta)
+            except Exception:
+                continue
+
+        return metadata
+
     def _handle_graph_cfg(self) -> None:
         data, err = self._parse_request_json()
         if err is not None or data is None:
@@ -817,11 +1055,18 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
                 ))
                 return
 
-            self._send_json(HTTPStatus.OK, {
+            response_body: dict = {
                 "nodes": graph["nodes"],
                 "edges": graph["edges"],
                 "method_full_name": method_full_name,
-            })
+            }
+            node_ids = [n["id"] for n in graph["nodes"]]
+            try:
+                response_body["metadata"] = self._fetch_node_metadata(node_ids)
+            except Exception:
+                response_body["metadata"] = {}
+
+            self._send_json(HTTPStatus.OK, response_body)
         except httpx.TimeoutException:
             self._send_json(HTTPStatus.GATEWAY_TIMEOUT, _json_error("query timed out", code="query_timeout"))
             return
@@ -900,11 +1145,147 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
                         f"No DFG found for method: {method_full_name}", code="empty_result"
                     ))
                     return
-                self._send_json(HTTPStatus.OK, {
+                response_body: dict = {
                     "nodes": graph["nodes"],
                     "edges": graph["edges"],
                     "method_full_name": method_full_name,
-                })
+                }
+                node_ids = [n["id"] for n in graph["nodes"]]
+                try:
+                    response_body["metadata"] = self._fetch_node_metadata(node_ids)
+                except Exception:
+                    response_body["metadata"] = {}
+                self._send_json(HTTPStatus.OK, response_body)
+        except httpx.TimeoutException:
+            self._send_json(HTTPStatus.GATEWAY_TIMEOUT, _json_error("query timed out", code="query_timeout"))
+            return
+        except Exception as e:
+            self._send_json(HTTPStatus.BAD_GATEWAY, _json_error(str(e), code="joern_error"))
+            return
+
+    def _handle_graph_pdg(self) -> None:
+        data, err = self._parse_request_json()
+        if err is not None or data is None:
+            self._send_json(HTTPStatus.BAD_REQUEST, err or _json_error("invalid request"))
+            return
+
+        method_full_name = str(data.get("method_full_name", "")).strip()
+        if not method_full_name:
+            self._send_json(HTTPStatus.BAD_REQUEST, _json_error("missing required field: method_full_name"))
+            return
+
+        sample_id = data.get("sample_id", "")
+        escaped = method_full_name.replace("\\", "\\\\").replace('"', '\\"')
+        query = f'cpg.method.fullName("{escaped}").dotPdg.l'
+
+        self._log_event("graph_pdg_request", method_full_name=method_full_name, sample_id=sample_id)
+
+        try:
+            with self.repl_semaphore:
+                resp = httpx.post(
+                    self.internal_url,
+                    json={"query": query},
+                    headers=_upstream_headers(self),
+                    timeout=self.query_timeout_sec,
+                )
+
+            resp.raise_for_status()
+            resp_json = resp.json()
+            success = resp_json.get("success", True)
+            if isinstance(success, str):
+                success = success.strip().lower() in ("true", "1", "yes")
+            if not success:
+                self._send_json(HTTPStatus.UNPROCESSABLE_ENTITY, _json_error(
+                    f"PDG query failed for method: {method_full_name}", code="query_failed"
+                ))
+                return
+
+            stdout = resp_json.get("stdout", "")
+            graph = _dot_to_graph(stdout)
+
+            if not graph["nodes"] and not graph["edges"]:
+                self._send_json(HTTPStatus.UNPROCESSABLE_ENTITY, _json_error(
+                    f"No PDG found for method: {method_full_name}", code="empty_result"
+                ))
+                return
+
+            response_body: dict = {
+                "nodes": graph["nodes"],
+                "edges": graph["edges"],
+                "method_full_name": method_full_name,
+            }
+            node_ids = [n["id"] for n in graph["nodes"]]
+            try:
+                response_body["metadata"] = self._fetch_node_metadata(node_ids)
+            except Exception:
+                response_body["metadata"] = {}
+
+            self._send_json(HTTPStatus.OK, response_body)
+        except httpx.TimeoutException:
+            self._send_json(HTTPStatus.GATEWAY_TIMEOUT, _json_error("query timed out", code="query_timeout"))
+            return
+        except Exception as e:
+            self._send_json(HTTPStatus.BAD_GATEWAY, _json_error(str(e), code="joern_error"))
+            return
+
+    def _handle_graph_ast(self) -> None:
+        data, err = self._parse_request_json()
+        if err is not None or data is None:
+            self._send_json(HTTPStatus.BAD_REQUEST, err or _json_error("invalid request"))
+            return
+
+        method_full_name = str(data.get("method_full_name", "")).strip()
+        if not method_full_name:
+            self._send_json(HTTPStatus.BAD_REQUEST, _json_error("missing required field: method_full_name"))
+            return
+
+        sample_id = data.get("sample_id", "")
+        escaped = method_full_name.replace("\\", "\\\\").replace('"', '\\"')
+        query = (
+            f'cpg.method.fullName("{escaped}").ast.map(node => '
+            f"(node.id, node.code, node.lineNumber, node.columnNumber, "
+            f"node.order, node.argumentIndex, node.label, "
+            f"node.astParent.id)"
+            f").l"
+        )
+
+        self._log_event("graph_ast_request", method_full_name=method_full_name, sample_id=sample_id)
+
+        try:
+            with self.repl_semaphore:
+                resp = httpx.post(
+                    self.internal_url,
+                    json={"query": query},
+                    headers=_upstream_headers(self),
+                    timeout=self.query_timeout_sec,
+                )
+
+            resp.raise_for_status()
+            resp_json = resp.json()
+            success = resp_json.get("success", True)
+            if isinstance(success, str):
+                success = success.strip().lower() in ("true", "1", "yes")
+            if not success:
+                self._send_json(HTTPStatus.UNPROCESSABLE_ENTITY, _json_error(
+                    f"AST query failed for method: {method_full_name}", code="query_failed"
+                ))
+                return
+
+            stdout = resp_json.get("stdout", "")
+            nodes, edges, metadata = _parse_ast_tuples(stdout)
+
+            if not nodes:
+                self._send_json(HTTPStatus.UNPROCESSABLE_ENTITY, _json_error(
+                    f"No AST found for method: {method_full_name}", code="empty_result"
+                ))
+                return
+
+            self._send_json(HTTPStatus.OK, {
+                "nodes": nodes,
+                "edges": edges,
+                "metadata": metadata,
+                "method_full_name": method_full_name,
+            })
         except httpx.TimeoutException:
             self._send_json(HTTPStatus.GATEWAY_TIMEOUT, _json_error("query timed out", code="query_timeout"))
             return
@@ -925,8 +1306,16 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
             self._handle_graph_cfg()
             return
 
-        if self.path == "/graph/dfg":
+        if self.path == "/graph/dfg" or self.path == "/graph/ddg":
             self._handle_graph_dfg()
+            return
+
+        if self.path == "/graph/pdg":
+            self._handle_graph_pdg()
+            return
+
+        if self.path == "/graph/ast":
+            self._handle_graph_ast()
             return
 
         if self.path == "/cache-metrics":

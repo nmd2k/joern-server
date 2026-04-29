@@ -270,8 +270,8 @@ class TestPlaygroundAppStructure:
         with open(path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        assert "parse" in content.lower(), "Parse panel missing"
-        assert "source" in content.lower(), "Source code input missing"
+        assert "parse-panel" in content.lower(), "Parse panel component missing"
+        assert "parse" in content.lower(), "Parse panel reference missing"
 
     def test_index_html_contains_query_panel(self):
         playground_dir = os.path.normpath(
@@ -308,11 +308,11 @@ class TestPlaygroundAppStructure:
         playground_dir = os.path.normpath(
             os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
-        path = os.path.join(playground_dir, "app.js")
+        path = os.path.join(playground_dir, "components", "tools-panel.js")
         with open(path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        assert "JOERN_TOOLS" in content, "app.js must reference window.JOERN_TOOLS"
+        assert "JOERN_TOOLS" in content, "tools-panel.js must reference window.JOERN_TOOLS"
 
 
 class TestPlaygroundPathTraversal:

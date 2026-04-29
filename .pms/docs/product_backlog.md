@@ -57,10 +57,10 @@
 | PB-041 | Default filename `snippet.txt` causes empty CPG for C/C++ parsing             | Bug     | High     | Done      | 5-hotfix | `c2cpg` silently skips `.txt` files. Fix: `_LANGUAGE_EXT` mapping → `snippet.c` for C, `snippet.cpp` for C++, etc. See S5-HF01. |
 | PB-042 | Strip ANSI escape codes from /query-sync stdout in proxy                      | Bug     | Medium   | Done      | 5-hotfix | Joern REPL wraps stdout in terminal color codes. Fix: `_strip_ansi()` applied to stdout field only (no schema change). See S5-HF02. |
 | PB-043 | Web playground: interactive CPG visualization (CFG, DFG)                      | Feature | High     | Done     | 6      | Client request: render subgraphs (control-flow, data-flow) in-browser for debugging. Implemented with cytoscape.js + /graph/cfg + /graph/dfg endpoints. Standalone Express server delivers playground on :3000. |
-| PB-044 | Standalone graph visualization service (extract from playground)              | Feature | High     | In Sprint | 7 | Extract graph vis into its own `/graph` page independent of 4-panel playground. See S7-004. |
-| PB-045 | All Joern graph types: PDG + AST endpoints                                   | Feature | High     | In Sprint | 7 | Add `/graph/pdg` and `/graph/ast` endpoints. See S7-001, S7-002. |
-| PB-046 | Graph node metadata: code, line, params, identifiers                         | Feature | High     | In Sprint | 7 | Enrich all `/graph/*` responses with per-node metadata map. Hover tooltip + click detail panel. See S7-003, S7-006, S7-007. |
-| PB-047 | Playground file/module organization refactor                                 | Chore   | Medium   | In Sprint | 7 | Split `app.js` into Vue components (parse/query/tools panels). See S7-008, S7-009. |
+| PB-044 | Standalone graph visualization service (extract from playground)              | Feature | High     | Done     | 7 | Graph vis extracted into its own `/graph` page independent of 4-panel playground. See S7-004. |
+| PB-045 | All Joern graph types: PDG + AST endpoints                                   | Feature | High     | Done     | 7 | `/graph/pdg` and `/graph/ast` endpoints added with DOT + Scala tuple parsing. See S7-001, S7-002. |
+| PB-046 | Graph node metadata: code, line, params, identifiers                         | Feature | High     | Done     | 7 | All `/graph/*` enriched with per-node metadata map; hover tooltip + click detail panel. See S7-003, S7-006, S7-007. |
+| PB-047 | Playground file/module organization refactor                                 | Chore   | Medium   | Done     | 7 | `app.js` (350→27L) split into 3 Vue components; `index.html` (176→18L) minimal scaffold. See S7-008, S7-009. |
 
 
 ---
@@ -98,6 +98,7 @@
 | 2026-04-29 | agent  | Added PB-041 (Bug/High): default filename `snippet.txt` bypasses c2cpg C/C++ source detection; fixed with `_LANGUAGE_EXT` mapping. See S5-HF01. |
 | 2026-04-29 | agent  | Added PB-042 (Bug/Medium): ANSI escape codes in /query-sync stdout; fixed with `_strip_ansi()` in proxy. Added PB-043 (Feature): CPG visualization for Sprint 6. |
 | 2026-04-30 | agent  | Sprint 6 closed. Added PB-044–PB-047 for Sprint 7: standalone graph vis, all graph types, node metadata, playground refactor. |
+| 2026-04-30 | agent  | Sprint 7 complete: all 10 items done. 384 tests pass (+16 new). PB-044–PB-047 marked Done. |
 
 
 ---
@@ -177,15 +178,15 @@ Target items:
 Target items:
 - ~~PB-043 (S6-001–S6-010): Web playground standalone Express server + MCP bridge + cytoscape.js graph vis~~ Done
 
-### Sprint 7 (Week 15-16): Graph Vis Standalone + All Graph Types + Node Metadata + Playground Refactor
+### Sprint 7 (Week 15-16): Graph Vis Standalone + All Graph Types + Node Metadata + Playground Refactor ✓ COMPLETE
 
 **Focus:** Extract graph visualization into standalone service; add all Joern graph types (PDG/AST); interactive node metadata (hover tooltip + click detail panel); refactor playground into components.
 
 Target items:
-- PB-044 (S7-004): Standalone graph visualization service
-- PB-045 (S7-001, S7-002): All Joern graph types (PDG + AST)
-- PB-046 (S7-003, S7-006, S7-007): Graph node metadata + interactive UX
-- PB-047 (S7-008, S7-009): Playground component refactor
+- ~~PB-044 (S7-004): Standalone graph visualization service~~ Done
+- ~~PB-045 (S7-001, S7-002): All Joern graph types (PDG + AST)~~ Done
+- ~~PB-046 (S7-003, S7-006, S7-007): Graph node metadata + interactive UX~~ Done
+- ~~PB-047 (S7-008, S7-009): Playground component refactor~~ Done
 
 ### Future Sprints
 

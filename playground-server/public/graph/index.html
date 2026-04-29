@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Graph Visualization — Joern CPG</title>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://unpkg.com/cytoscape/dist/cytoscape.min.js"></script>
+<script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+<link rel="stylesheet" href="/graph/graph-styles.css">
+</head>
+<body>
+<div id="app">
+  <h1>&#9654; CPG Graph Visualization <a href="/playground/index.html">&larr; Back to Playground</a></h1>
+
+  <div class="controls">
+    <div class="form-group" style="flex:0 0 220px">
+      <label>Graph Type</label>
+      <select v-model="graphType" @change="onTypeChange">
+        <option value="cfg">Control Flow (CFG)</option>
+        <option value="dfg">Data Dependence (DDG)</option>
+        <option value="pdg">Program Dependence (PDG)</option>
+        <option value="ast">Abstract Syntax Tree (AST)</option>
+      </select>
+    </div>
+    <div class="form-group" style="flex:1">
+      <label>Method Full Name</label>
+      <input v-model="graphMethod" type="text" placeholder="e.g. main" @keyup.enter="loadGraph">
+    </div>
+    <div class="form-group">
+      <button class="btn btn-primary" @click="loadGraph" :disabled="graphLoading">
+        <span v-if="graphLoading" class="spinner"></span>
+        {{ graphLoading ? 'Loading...' : 'Load Graph' }}
+      </button>
+    </div>
+  </div>
+
+  <div v-if="graphError" class="error-box">{{ graphError }}</div>
+  <div v-if="graphData" class="info-bar">
+    Showing {{ graphData.nodes.length }} nodes, {{ graphData.edges.length }} edges
+    <span v-if="graphMetadata"> — metadata for {{ Object.keys(graphMetadata).length }} nodes</span>
+  </div>
+
+  <div class="main-area">
+    <div class="graph-container" ref="graphContainer">
+      <div id="cy"></div>
+      <div id="tooltip" ref="tooltip" v-show="tooltipVisible"></div>
+    </div>
+    <aside id="detail-panel" ref="detailPanel" :class="{open: detailOpen}">
+      <button class="close-btn" @click="closeDetail">&times;</button>
+      <h3>Node Details</h3>
+      <table class="detail-table" v-if="selectedNode">
+        <tr><td>ID</td><td><code>{{ selectedNode.id }}</code></td></tr>
+        <tr v-if="selectedNode.label"><td>Label</td><td>{{ selectedNode.label }}</td></tr>
+        <tr v-if="selectedNode.shape"><td>Shape</td><td>{{ selectedNode.shape }}</td></tr>
+        <tr v-if="selectedNodeMeta.node_type"><td>Node Type</td><td><code>{{ selectedNodeMeta.node_type }}</code></td></tr>
+        <tr v-if="'code' in selectedNodeMeta"><td>Code</td><td><code>{{ selectedNodeMeta.code }}</code></td></tr>
+        <tr v-if="'lineNumber' in selectedNodeMeta"><td>Line Number</td><td>{{ selectedNodeMeta.lineNumber }}</td></tr>
+        <tr v-if="'columnNumber' in selectedNodeMeta"><td>Column Number</td><td>{{ selectedNodeMeta.columnNumber }}</td></tr>
+        <tr v-if="'order' in selectedNodeMeta"><td>Order</td><td>{{ selectedNodeMeta.order }}</td></tr>
+        <tr v-if="'argumentIndex' in selectedNodeMeta"><td>Argument Index</td><td>{{ selectedNodeMeta.argumentIndex }}</td></tr>
+        <tr v-if="selectedNodeMeta.fullName"><td>Full Name</td><td><code>{{ selectedNodeMeta.fullName }}</code></td></tr>
+        <tr v-if="selectedNodeMeta.name"><td>Name</td><td><code>{{ selectedNodeMeta.name }}</code></td></tr>
+        <tr v-for="(val, key) in selectedNodeExtraMeta" :key="key">
+          <td>{{ key }}</td><td><code>{{ val }}</code></td>
+        </tr>
+      </table>
+      <div v-else style="color:#484f58">Click a node to see details</div>
+    </aside>
+  </div>
+</div>
+<script src="/graph/graph-app.js"></script>
+</body>
+</html>
