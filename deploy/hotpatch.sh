@@ -60,8 +60,9 @@ patch_container() {
     docker exec "$container" kill "$MCP_PID" 2>/dev/null || true
     sleep 0.5
   fi
+  PROXY_PORT_VAL=$(docker exec "$container" printenv PROXY_PORT 2>/dev/null || echo "8080")
   docker exec -d "$container" sh -c \
-    "cd /app/mcp-joern && MCP_TRANSPORT=sse MCP_HOST=0.0.0.0 python3 server.py"
+    "cd /app/mcp-joern && MCP_TRANSPORT=sse MCP_HOST=0.0.0.0 HOST=127.0.0.1 PORT=$PROXY_PORT_VAL python3 server.py"
 
   echo "  [done]  $container"
 }

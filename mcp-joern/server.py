@@ -149,6 +149,83 @@ def joern_remote(query):
     return None
 
 
+def proxy_post(path: str, payload: dict) -> Optional[dict]:
+    """Send a POST request to the Joern proxy (e.g. /parse, /cleanup).
+
+    Routes through the proxy on HOST:PORT, which provides CPGRegistry
+    caching and LRU query caching — unlike sending directly to the REPL.
+    """
+    url = f"http://{server_endpoint}{path}"
+    headers: Dict[str, Any] = {
+        "Content-Type": "application/json",
+        "X-Session-Id": JOERN_SESSION_ID,
+    }
+    post_kwargs: Dict[str, Any] = {
+        "data": json.dumps(payload),
+        "headers": headers,
+        "timeout": timeout,
+    }
+    if basic_auth is not None:
+        post_kwargs["auth"] = basic_auth
+    try:
+        response = requests.post(url, **post_kwargs)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        sys.stderr.write(f"Proxy POST Error ({path}): {str(e)}\n")
+    except json.JSONDecodeError:
+        sys.stderr.write(f"Proxy POST Error ({path}): Invalid JSON response\n")
+    return None
+
+
+@joern_mcp.tool()
+def parse_source(
+    source_code: str,
+    sample_id: str,
+    language: str = "",
+    overwrite: bool = True,
+) -> str:
+    """Parse source code into a CPG via the proxy and load it for querying.
+
+    Routes through the HTTP proxy which provides CPGRegistry caching: if the
+    same source code was parsed before (same SHA-256 hash), the CPG is copied
+    from the archive instead of re-parsing (cache_hit=True in response).
+
+    After a successful parse, the CPG is automatically loaded into Joern so
+    subsequent tool calls work immediately.
+
+    @param source_code: The source code to parse
+    @param sample_id: Unique identifier for this CPG (used as directory name under /workspace/cpg-out/)
+    @param language: Programming language (c, python, js, java, golang, etc.). Default: auto-detect by joern-parse.
+    @param overwrite: If True (default), replace existing CPG for this sample_id. Enables idempotent re-parse with cache benefit.
+    @return: JSON string with ok, sample_id, cpg_path, cache_hit, source_hash
+    """
+    global _LAST_CPG_FILEPATH
+
+    payload: Dict[str, Any] = {
+        "source_code": source_code,
+        "sample_id": sample_id,
+        "overwrite": overwrite,
+    }
+    if language:
+        payload["language"] = language
+
+    result = proxy_post("/parse", payload)
+    if result is None:
+        return json.dumps({"ok": False, "error": "Failed to connect to Joern proxy"})
+
+    if not result.get("ok", False):
+        return json.dumps(result)
+
+    cpg_path = result.get("cpg_path", "")
+    if cpg_path:
+        joern_remote(f'importCpg("{cpg_path}")')
+        joern_remote(f'load_cpg("{cpg_path}")')
+        _LAST_CPG_FILEPATH = cpg_path
+
+    return json.dumps(result)
+
+
 @joern_mcp.tool()
 def get_help():
     """Get help information from joern server"""

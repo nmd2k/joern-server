@@ -81,6 +81,39 @@ def _normalize_language(language: str) -> str:
     return _LANGUAGE_ALIASES.get(language.lower(), language) if language else language
 
 
+_LANGUAGE_EXT: dict[str, str] = {
+    "c": ".c",
+    "cpp": ".cpp",
+    "c++": ".cpp",
+    "newc": ".c",
+    "jssrc": ".js",
+    "javascript": ".js",
+    "typescript": ".ts",
+    "pythonsrc": ".py",
+    "python": ".py",
+    "java": ".java",
+    "javasrc": ".java",
+    "rubysrc": ".rb",
+    "ruby": ".rb",
+    "php": ".php",
+    "csharpsrc": ".cs",
+    "csharp": ".cs",
+    "swiftsrc": ".swift",
+    "golang": ".go",
+    "kotlin": ".kt",
+    "rust": ".rs",
+    "llvm": ".ll",
+    "ghidra": ".c",
+}
+
+
+def _default_filename(language: str) -> str:
+    """Return a filename with an extension appropriate for the language frontend."""
+    normalized = _normalize_language(language)
+    ext = _LANGUAGE_EXT.get(normalized, ".txt")
+    return f"snippet{ext}"
+
+
 def _json_error(msg: str, *, code: str = "bad_request") -> dict[str, str]:
     return {"error": msg, "code": code}
 
@@ -416,6 +449,36 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_GATEWAY, {"error": str(e)})
             return
 
+        if self.path.startswith("/playground"):
+            # Resolve file relative to the playground directory.
+            rel = self.path[len("/playground"):].lstrip("/")
+            filename = rel or "index.html"
+            playground_dir = Path(__file__).resolve().parent.parent / "playground"
+            file_path = playground_dir / filename
+            # Prevent directory traversal
+            try:
+                file_path.resolve().relative_to(playground_dir.resolve())
+            except ValueError:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+                return
+            if not file_path.is_file():
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+                return
+            # Content-Type mapping
+            ext_map = {
+                ".html": "text/html",
+                ".css": "text/css",
+                ".js": "application/javascript",
+            }
+            content_type = ext_map.get(file_path.suffix, "application/octet-stream")
+            data = file_path.read_bytes()
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
     def _handle_parse(self) -> None:
@@ -427,7 +490,7 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
         sample_id_raw = str(data.get("sample_id", "")).strip()
         source_code = data.get("source_code")
         language = _normalize_language(str(data.get("language", "")).strip())
-        filename = str(data.get("filename", "")).strip() or "snippet.txt"
+        filename = str(data.get("filename", "")).strip() or _default_filename(language)
         overwrite = bool(data.get("overwrite", False))
 
         if not sample_id_raw:
@@ -448,23 +511,13 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
             overwrite=overwrite,
             source_hash=source_hash,
         )
-        if cpg_out.exists() and not overwrite:
-            self._send_json(
-                HTTPStatus.CONFLICT,
-                _json_error(
-                    f"CPG output already exists at {cpg_out}; pass overwrite=true to replace",
-                    code="cpg_exists",
-                ),
-            )
-            return
-        if cpg_out.exists() and overwrite:
-            _cpg_remove(cpg_out)
 
         # Store sample_id → source_hash mapping for archive-on-cleanup
-        with self.__class__._sid_hash_lock:
-            self.__class__._sid_to_hash[sample_id] = source_hash
+        # ONLY set after confirming this is a successful parse/cache_hit, not speculatively.
 
-        # Try cache hit (per-hash lock prevents double-parse on concurrent same-hash requests)
+        # Try cache hit BEFORE the exists/guard check.
+        # If the registry has this source_hash, the result is identical regardless
+        # of whether cpg_out already exists on disk — return cache_hit straight away.
         hash_lock = _get_hash_lock(source_hash)
         with hash_lock:
             if self.cpg_registry is not None:
@@ -495,67 +548,110 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
                                     "source_hash": source_hash,
                                 },
                             )
+                            with self.__class__._sid_hash_lock:
+                                self.__class__._sid_to_hash[sample_id] = source_hash
                             return
                         except Exception:
                             # Archive copy failed — fall through to full parse
                             _cpg_remove(cpg_out)
 
-            tmp_src_dir = Path(tempfile.mkdtemp(prefix=f"joern-src-{sample_id}-"))
-            try:
-                src_path = tmp_src_dir / Path(filename).name
-                src_path.write_text(source_code, encoding="utf-8", newline="\n")
-                cmd = [
-                    self.parse_bin,
-                    str(tmp_src_dir),
-                    "--output",
-                    str(cpg_out),
-                ]
-                if language:
-                    cmd.extend(["--language", language])
-
-                proc = subprocess.run(
-                    cmd,
-                    text=True,
-                    capture_output=True,
-                    timeout=self.parse_timeout_sec,
-                    check=False,
-                )
-                ok = proc.returncode == 0 and cpg_out.exists()
-                status = HTTPStatus.OK if ok else HTTPStatus.BAD_GATEWAY
+        # No archive cache hit — check if existing CPG on disk matches this source.
+        # Idempotent hit: same sample_id + same source_hash = same CPG, return immediately.
+        if cpg_out.exists() and not overwrite:
+            with self.__class__._sid_hash_lock:
+                existing_hash = self.__class__._sid_to_hash.get(sample_id)
+            if existing_hash == source_hash:
                 self._log_event(
                     "parse_result",
                     sample_id=sample_id,
-                    ok=ok,
-                    return_code=proc.returncode,
-                    cache_hit=False,
+                    ok=True,
+                    cache_hit=True,
                     source_hash=source_hash,
                 )
                 self._send_json(
-                    status,
+                    HTTPStatus.OK,
                     {
-                        "ok": ok,
+                        "ok": True,
                         "sample_id": sample_id,
                         "cpg_path": str(cpg_out),
                         "language": language or None,
-                        "return_code": proc.returncode,
-                        "stdout": proc.stdout[-100_000:],
-                        "stderr": proc.stderr[-100_000:],
-                        "cache_hit": False,
+                        "cache_hit": True,
                         "source_hash": source_hash,
                     },
                 )
-            except subprocess.TimeoutExpired:
-                self._send_json(
-                    HTTPStatus.GATEWAY_TIMEOUT,
-                    _json_error(
-                        f"joern-parse timed out after {self.parse_timeout_sec}s",
-                        code="parse_timeout",
-                    ),
-                )
-            except Exception as e:
-                self._send_json(HTTPStatus.BAD_GATEWAY, _json_error(str(e), code="parse_failed"))
-            finally:
-                shutil.rmtree(tmp_src_dir, ignore_errors=True)
+                with self.__class__._sid_hash_lock:
+                    self.__class__._sid_to_hash[sample_id] = source_hash
+                return
+            self._send_json(
+                HTTPStatus.CONFLICT,
+                _json_error(
+                    f"CPG output already exists at {cpg_out}; pass overwrite=true to replace",
+                    code="cpg_exists",
+                ),
+            )
+            return
+        if cpg_out.exists() and overwrite:
+            _cpg_remove(cpg_out)
+
+        tmp_src_dir = Path(tempfile.mkdtemp(prefix=f"joern-src-{sample_id}-"))
+        try:
+            src_path = tmp_src_dir / Path(filename).name
+            src_path.write_text(source_code, encoding="utf-8", newline="\n")
+            cmd = [
+                self.parse_bin,
+                str(tmp_src_dir),
+                "--output",
+                str(cpg_out),
+            ]
+            if language:
+                cmd.extend(["--language", language])
+
+            proc = subprocess.run(
+                cmd,
+                text=True,
+                capture_output=True,
+                timeout=self.parse_timeout_sec,
+                check=False,
+            )
+            ok = proc.returncode == 0 and cpg_out.exists()
+            status = HTTPStatus.OK if ok else HTTPStatus.BAD_GATEWAY
+            self._log_event(
+                "parse_result",
+                sample_id=sample_id,
+                ok=ok,
+                return_code=proc.returncode,
+                cache_hit=False,
+                source_hash=source_hash,
+            )
+            self._send_json(
+                status,
+                {
+                    "ok": ok,
+                    "sample_id": sample_id,
+                    "cpg_path": str(cpg_out),
+                    "language": language or None,
+                    "return_code": proc.returncode,
+                    "stdout": proc.stdout[-100_000:],
+                    "stderr": proc.stderr[-100_000:],
+                    "cache_hit": False,
+                    "source_hash": source_hash,
+                },
+            )
+            if ok:
+                with self.__class__._sid_hash_lock:
+                    self.__class__._sid_to_hash[sample_id] = source_hash
+        except subprocess.TimeoutExpired:
+            self._send_json(
+                HTTPStatus.GATEWAY_TIMEOUT,
+                _json_error(
+                    f"joern-parse timed out after {self.parse_timeout_sec}s",
+                    code="parse_timeout",
+                ),
+            )
+        except Exception as e:
+            self._send_json(HTTPStatus.BAD_GATEWAY, _json_error(str(e), code="parse_failed"))
+        finally:
+            shutil.rmtree(tmp_src_dir, ignore_errors=True)
 
     def _handle_cleanup(self) -> None:
         data, err = self._parse_request_json()
@@ -694,28 +790,40 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
                     timeout=self.query_timeout_sec,
                 )
             latency_ms = int((time.perf_counter() - t0) * 1000.0)
-            # Preserve status and body; clients expect Joern's /query-sync JSON.
+            # Preserve body; clients expect Joern's /query-sync JSON shape.
             resp_json = resp.json()
 
-            # Cache successful responses for cacheable queries
-            if self.query_cache and self._should_cache(query_class) and resp.status_code == 200:
+            # Extract success flag — Joern signals query errors via success=false at HTTP 200.
+            success = None
+            if isinstance(resp_json, dict):
+                raw_success = resp_json.get("success")
+                if isinstance(raw_success, bool):
+                    success = raw_success
+                elif isinstance(raw_success, str):
+                    success = raw_success.strip().lower() in ("true", "1", "yes")
+
+            # Map Joern's HTTP 200 + success=false to 422 so callers can detect query errors
+            # without parsing the body (wrong syntax, runtime errors, etc.).
+            out_status = resp.status_code
+            if resp.status_code == 200 and success is False:
+                out_status = HTTPStatus.UNPROCESSABLE_ENTITY
+
+            # Cache only genuinely successful responses.
+            if self.query_cache and self._should_cache(query_class) and out_status == 200:
                 query_hash = self._query_hash(query_str)
                 self.query_cache.put(session_id, query_hash, resp_json)
 
-            success = None
-            if isinstance(resp_json, dict):
-                success = resp_json.get("success")
             self._log_event(
                 "query_sync",
                 request_id=request_id,
                 query_class=query_class,
                 query_preview=query_preview,
-                status_code=resp.status_code,
+                status_code=out_status,
                 success=success,
                 latency_ms=latency_ms,
                 cache_hit=False,
             )
-            self._send_json(resp.status_code, resp_json)
+            self._send_json(out_status, resp_json)
         except httpx.TimeoutException as e:
             latency_ms = int((time.perf_counter() - t0) * 1000.0)
             self._log_event(

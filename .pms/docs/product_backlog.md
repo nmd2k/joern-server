@@ -1,7 +1,7 @@
 # Product Backlog
 
 **Product:** Joern Server - Scalable CPG Analysis Platform
-**Last updated:** 2026-04-19
+**Last updated:** 2026-04-29
 **Target:** Research/Academic deployment (small codebases: 10-200 LOC)
 
 > The product backlog is the single source of truth for all planned work.
@@ -51,6 +51,10 @@
 | PB-035 | MCP tool: `get_control_dependencies` — conditions guarding a node              | Feature | Low      | Open      | —      | Nice-to-have from NeuralAtlas. Auth-check detection use case. |
 | PB-036 | MCP tool: `get_assignments_in_method` — assignment targets and sources         | Feature | Low      | Open      | —      | Nice-to-have from NeuralAtlas. |
 | PB-037 | MCP tool: `get_imports` — imports for a file or class                          | Feature | Low      | Open      | —      | Nice-to-have from NeuralAtlas. SBOM-adjacent checks. |
+| PB-038 | MCP arm bypasses proxy cache on /parse with same sample_id                   | Bug     | High     | Done      | 5      | Verified: parse_source routes through proxy_post → /parse. 2 regression tests added. |
+| PB-039 | Web playground: notebook-style interactive UI for CPG analysis               | Feature | High     | Done      | 5      | Vue 3 SPA in 4 modular files served by proxy; parse→load→query→25 tools workflow. 17 tests. |
+| PB-040 | MCP tool ↔ CPGQL translation table for playground                            | Feature | High     | Done      | 5      | 25 tools with CPGQL translation in tool-definitions.js; escapeCPGQL helper. |
+| PB-041 | Default filename `snippet.txt` causes empty CPG for C/C++ parsing             | Bug     | High     | Done      | 5-hotfix | `c2cpg` silently skips `.txt` files. Fix: `_LANGUAGE_EXT` mapping → `snippet.c` for C, `snippet.cpp` for C++, etc. See S5-HF01. |
 
 
 ---
@@ -83,6 +87,9 @@
 | 2026-04-18 | agent  | Added PB-020 and PB-021 (Bug/High) following /query-sync timeout investigation; assigned to sprint 2-hotfix          |
 | 2026-04-19 | agent  | Hotfix S2-HF01 merged to main (PR #5). Added PB-022–PB-027 for Sprint 3 CPG cache; PB-008 assigned to Sprint 3.     |
 | 2026-04-23 | agent  | Added PB-028–PB-037 from NeuralAtlas feature request (`.pms/feature_req/1_mcp.md`); PB-028–PB-033 (High) assigned to Sprint 4; PB-034–PB-037 (Low/nice-to-have) to backlog. |
+| 2026-04-24 | agent  | Added PB-038 (Bug/High): MCP arm bypasses proxy cache; assigned to Sprint 5. |
+| 2026-04-29 | agent  | Added PB-039–PB-040; Sprint 5 complete: web playground delivered. 368 tests pass, 0 failures. |
+| 2026-04-29 | agent  | Added PB-041 (Bug/High): default filename `snippet.txt` bypasses c2cpg C/C++ source detection; fixed with `_LANGUAGE_EXT` mapping. See S5-HF01. |
 
 
 ---
@@ -144,10 +151,20 @@ Target items:
 - PB-032 (S4-005): `find_literals`
 - PB-033 (S4-006): `get_method_location`
 
+### Sprint 5 (Week 11-12): Web Playground & MCP Cache Parity ✓ COMPLETE
+
+**Focus:** Deliver a browser-based interactive playground (Jupyter-notebook style) for researchers to parse, load CPGs, run CPGQL queries, and execute MCP tools. Verify MCP /parse proxy routing for CPGRegistry cache hits.
+
+Target items:
+- ~~PB-038 (S5-001): Verify + regression-test MCP /parse proxy routing for CPGRegistry cache hit~~ Done
+- ~~PB-039 (S5-002–S5-005): Web playground — Vue 3 notebook app (parse → load → query → MCP tools)~~ Done
+- ~~PB-040 (S5-005): MCP tool ↔ CPGQL translation table~~ Done
+- ~~PB-041 (S5-HF01): Default filename extension causes empty CPG for C/C++~~ Done (post-release hotfix)
+
 ### Future Sprints
 
-- Sprint 5: Developer experience (PB-007, PB-010) + nice-to-have MCP tools (PB-034–PB-037)
-- Sprint 6: Advanced features (PB-009, PB-011)
+- Sprint 6: Developer experience (PB-007, PB-010) + nice-to-have MCP tools (PB-034–PB-037)
+- Sprint 7: Advanced features (PB-009, PB-011)
 
 ---
 

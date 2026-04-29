@@ -45,9 +45,8 @@ class TestGetCallArguments:
             result = srv.get_call_arguments("111669149702L")
 
         assert len(captured_queries) == 1
-        assert "111669149702" in captured_queries[0]
-        assert "111669149702L" not in captured_queries[0], (
-            "The L suffix should be stripped before embedding in the query"
+        assert "111669149702L" in captured_queries[0], (
+            "The L suffix should be preserved in the query for type correctness"
         )
         assert isinstance(result, list)
         assert len(result) == 1
@@ -223,8 +222,8 @@ class TestGetCallArguments:
             srv.get_call_arguments("98765L")
 
         query = captured_queries[0]
-        assert "cpg.call.id(98765)" in query, (
-            f"Query should contain 'cpg.call.id(98765)'; got {query!r}"
+        assert "cpg.call.id(98765L)" in query, (
+            f"Query should contain 'cpg.call.id(98765L)'; got {query!r}"
         )
         assert ".argument" in query
         assert ".map(" in query

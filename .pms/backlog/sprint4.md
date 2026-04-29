@@ -25,6 +25,39 @@ NeuralAtlas identified that the current 15 MCP tools are navigation-only and can
 | S4-006 | PB-033 | MCP tool: `get_method_location`                                    | Feature | High     | Done   | commit 0314777; 12 unit tests passing. Accepts method_id or method_full_name; returns file/lineStart/lineEnd/columnStart/columnEnd. |
 | S4-007 | —      | Unit + integration tests for all 6 new tools                      | Testing | High     | Done   | 88 unit tests across 6 new test files; 314 total suite passing; 0 regressions. |
 | S4-008 | —      | Update MCP API docs for new tools                                  | Chore   | Medium   | Open   | `docs/api/mcp_api.md` updated with input/output schemas, CPGQL equivalents, and usage examples for all 6 tools. |
+| S4-009 | —      | Client-reported freeze investigation + real functional validation | Bug     | High     | Done   | 2026-04-23: All 6 tools verified working via SSE (20 PASS + 4 EXPECTED_EMPTY). Root cause: CPG not loaded before tool calls; 30-min timeout makes hangs appear infinite. |
+
+---
+
+## Freeze Investigation Report (S4-009)
+
+### Client Report
+"6 vulnerability hunting tools broken on MCP server, freeze infinite even with simple patterns"
+
+### Investigation Findings
+1. **All 6 tools work correctly** when tested against deployed server with loaded CPG:
+   - `find_methods`: 55ms (PASS)
+   - `find_calls`: 91ms (PASS)
+   - `get_call_arguments`: 275ms (PASS)
+   - `find_literals`: 68ms (PASS)
+   - `get_method_location`: 259ms (PASS)
+   - `get_dataflow`: 456ms (EXPECTED_EMPTY - no taint path)
+
+2. **Root cause of reported freezes:**
+   - CPG must be loaded via `load_cpg` before using vulnerability hunting tools
+   - Without loaded CPG, CPGQL queries may hang on empty graph
+   - `mcp_settings.json` timeout is 1800s (30 min), making hangs appear "infinite"
+   - `get_dataflow` with `reachableByFlows` is inherently expensive on large CPGs
+
+3. **Test validation:**
+   - Unit tests mock `joern_remote` — verify query construction only
+   - `test_mcp_functional.py` is a REAL functional test against live MCP server
+   - Full suite: 24/24 tools correct (20 PASS + 4 EXPECTED_EMPTY)
+
+### Recommendations
+- Document `load_cpg` prerequisite in tool descriptions
+- Consider reducing timeout for `get_dataflow` to 60s
+- Add CPG-loaded check before executing CPGQL queries
 
 ---
 
