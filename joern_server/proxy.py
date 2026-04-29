@@ -47,6 +47,14 @@ def _safe_sample_id(raw: str) -> str:
     return safe or "sample"
 
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+
+
+def _strip_ansi(text: str) -> str:
+    """Strip ANSI color/style escape sequences from Joern REPL stdout."""
+    return _ANSI_RE.sub("", text) if text else text
+
+
 # Map common/alias language names to the Joern-recognized language strings.
 # Run `joern-parse --list-languages` inside the container to see all valid names.
 _LANGUAGE_ALIASES: dict[str, str] = {
@@ -792,6 +800,11 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
             latency_ms = int((time.perf_counter() - t0) * 1000.0)
             # Preserve body; clients expect Joern's /query-sync JSON shape.
             resp_json = resp.json()
+
+            # Strip ANSI escapes from stdout — Joern REPL wraps output in
+            # terminal color codes meaningless to API consumers. Schema unchanged.
+            if isinstance(resp_json, dict) and "stdout" in resp_json and isinstance(resp_json["stdout"], str):
+                resp_json["stdout"] = _strip_ansi(resp_json["stdout"])
 
             # Extract success flag — Joern signals query errors via success=false at HTTP 200.
             success = None

@@ -55,6 +55,8 @@
 | PB-039 | Web playground: notebook-style interactive UI for CPG analysis               | Feature | High     | Done      | 5      | Vue 3 SPA in 4 modular files served by proxy; parse→load→query→25 tools workflow. 17 tests. |
 | PB-040 | MCP tool ↔ CPGQL translation table for playground                            | Feature | High     | Done      | 5      | 25 tools with CPGQL translation in tool-definitions.js; escapeCPGQL helper. |
 | PB-041 | Default filename `snippet.txt` causes empty CPG for C/C++ parsing             | Bug     | High     | Done      | 5-hotfix | `c2cpg` silently skips `.txt` files. Fix: `_LANGUAGE_EXT` mapping → `snippet.c` for C, `snippet.cpp` for C++, etc. See S5-HF01. |
+| PB-042 | Strip ANSI escape codes from /query-sync stdout in proxy                      | Bug     | Medium   | Done      | 5-hotfix | Joern REPL wraps stdout in terminal color codes. Fix: `_strip_ansi()` applied to stdout field only (no schema change). See S5-HF02. |
+| PB-043 | Web playground: interactive CPG visualization (CFG, DFG)                      | Feature | Medium   | Open     | 6      | Client request: render subgraphs (control-flow, data-flow) in-browser for debugging. Explore cytoscape.js or vis.js. |
 
 
 ---
@@ -90,6 +92,7 @@
 | 2026-04-24 | agent  | Added PB-038 (Bug/High): MCP arm bypasses proxy cache; assigned to Sprint 5. |
 | 2026-04-29 | agent  | Added PB-039–PB-040; Sprint 5 complete: web playground delivered. 368 tests pass, 0 failures. |
 | 2026-04-29 | agent  | Added PB-041 (Bug/High): default filename `snippet.txt` bypasses c2cpg C/C++ source detection; fixed with `_LANGUAGE_EXT` mapping. See S5-HF01. |
+| 2026-04-29 | agent  | Added PB-042 (Bug/Medium): ANSI escape codes in /query-sync stdout; fixed with `_strip_ansi()` in proxy. Added PB-043 (Feature): CPG visualization for Sprint 6. |
 
 
 ---
@@ -160,10 +163,11 @@ Target items:
 - ~~PB-039 (S5-002–S5-005): Web playground — Vue 3 notebook app (parse → load → query → MCP tools)~~ Done
 - ~~PB-040 (S5-005): MCP tool ↔ CPGQL translation table~~ Done
 - ~~PB-041 (S5-HF01): Default filename extension causes empty CPG for C/C++~~ Done (post-release hotfix)
+- ~~PB-042 (S5-HF02): Strip ANSI escape codes from /query-sync stdout~~ Done (post-release hotfix)
 
 ### Future Sprints
 
-- Sprint 6: Developer experience (PB-007, PB-010) + nice-to-have MCP tools (PB-034–PB-037)
+- Sprint 6: Developer experience (PB-007, PB-010) + nice-to-have MCP tools (PB-034–PB-037) + CPG visualization (PB-043)
 - Sprint 7: Advanced features (PB-009, PB-011)
 
 ---

@@ -25,7 +25,8 @@ Additionally, PB-038 (logged 2026-04-24) identified that MCP `/parse` may bypass
 | S5-004 | —      | Notebook: CPGQL query editor panel                                 | Feature | High     | Done    | CPGQL textarea (monospace). "Run Query" → POST /query-sync → JSON result panel with Copy. Query history (last 20, clickable). |
 | S5-005 | —      | Notebook: MCP tool picker panel                                    | Feature | High     | Done    | Dropdown of 25 tools (24 MCP + parse_source) in 6 `<optgroup>` categories. Dynamic parameter forms. Execute translates to CPGQL → /query-sync. All 25 CPGQL translations embedded. |
 | S5-006 | —      | Integration tests for playground routes                            | Testing | High     | Done    | 17 tests: GET /playground (HTML, CSS, JS serving), tool definitions (25 tools, 6 groups), CPGQL translation correctness, path traversal protection. All passing. |
-| S5-HF01 | PB-041 | Post-release: default filename `snippet.txt` causes empty CPG for C/C++ | Bug     | High     | Done    | Added `_LANGUAGE_EXT` mapping + `_default_filename()` in `proxy.py`; C code now produces `snippet.c` → `cpg.method.name("add").l` returns the `add` Method (68 nodes vs 11). Full suite 368 passed, 0 regressions. See `report/sprint5-report.md` §Post-Release Bug. |
+| S5-HF01 | PB-041 | Post-release: default filename `snippet.txt` causes empty CPG for C/C++ | Bug     | High     | Done    | Added `_LANGUAGE_EXT` mapping + `_default_filename()` in `proxy.py`; C code now produces `snippet.c` → 68 nodes vs 11. Full suite 368 passed, 0 regressions. |
+| S5-HF02 | PB-042 | Post-release: ANSI escape codes in /query-sync stdout pollute playground display | Bug     | Medium   | Done    | Added `_strip_ansi()` in `proxy.py`; applied to stdout field only (no schema change). Playground `formatResult()` extracts stdout + strips ANSI defensively. |
 
 ---
 

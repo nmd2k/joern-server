@@ -114,6 +114,35 @@ Full unit test suite: **368 passed, 1 skipped, 0 failures** — no regressions i
 
 ---
 
+## Post-Release Bug: S5-HF02 — ANSI escape codes in /query-sync stdout
+
+### Discovery
+
+The playground displayed raw JSON with ANSI terminal color codes (`\x1b[33m`, `\x1b[36m`, `\x1b[0m`) rendered as escape sequences in the result pane. Example output:
+
+```
+\u001b[33mval\u001b[0m \u001b[36mres0\u001b[0m: \u001b[32mList[String]\u001b[0m = List("main")
+```
+
+### Root Cause
+
+The Joern REPL wraps all output in terminal ANSI color codes. The proxy forwards these unchanged in the `stdout` field. The playground's `formatResult()` displayed them raw.
+
+### Fix
+
+**Server-side** (`joern_server/proxy.py:802-806`): Added `_strip_ansi()` helper using the same regex already present in `mcp-joern/common_tools.py` and tests. Applied to the `stdout` field only — no schema change, `success`/`uuid` fields untouched.
+
+**Playground** (`playground/app.js:66-79`): `formatResult()` now:
+1. Extracts the `stdout` field from the response wrapper for cleaner display
+2. Strips ANSI codes defensively as a fallback
+
+### Verification
+
+**Before:** `ANSI present: True`, `stdout: \x1b[33mval\x1b[0m...`  
+**After:** `ANSI present: False`, `stdout: val res0: List[String] = List("main")`
+
+---
+
 ## Phase Summary
 
 ### Phase 1 — Planning

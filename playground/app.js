@@ -65,10 +65,18 @@
       escapeCPGQL: escapeCPGQL,
       formatResult: function(val) {
         if (!val) return "";
+        // Extract stdout from query-sync response wrapper
+        if (typeof val === "object" && !Array.isArray(val) && val.stdout !== undefined) {
+          val = val.stdout;
+        }
         if (typeof val === "string") {
+          val = val.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
           try { return JSON.stringify(JSON.parse(val), null, 2); } catch (e) { return val; }
         }
-        try { return JSON.stringify(val, null, 2); } catch (e) { return String(val); }
+        try {
+          var s = JSON.stringify(val, null, 2);
+          return s.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
+        } catch (e) { return String(val); }
       },
       formatTime: function(ts) {
         var d = new Date(ts);
