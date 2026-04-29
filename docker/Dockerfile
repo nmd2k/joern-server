@@ -37,12 +37,13 @@ COPY --chmod=755 docker/unified-entrypoint.sh /usr/local/bin/neuralatlas-unified
 
 COPY --chown=joern:joern mcp-joern /app/mcp-joern
 COPY --chown=joern:joern joern_server /app/joern_server
+COPY --chown=joern:joern playground /app/playground
 
 # Include committed sample CPG used by integration tests and smoke checks.
 # The real Joern server runs inside the container, so the file must be present
 # at the in-container path referenced by tests (default: /app/samples/c/hello.cpg).
 RUN mkdir -p /app/samples/c
-COPY --chown=joern:joern samples/c/hello.cpg /app/samples/c/hello.cpg
+# COPY --chown=joern:joern samples/c/hello.cpg /app/samples/c/hello.cpg
 
 RUN python3 -m pip install --no-cache-dir -r /app/mcp-joern/requirements.txt \
   && python3 -m pip install --no-cache-dir "httpx>=0.27.0"

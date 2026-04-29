@@ -54,8 +54,7 @@ class TestGetMethodLocation:
 
         assert len(captured_query) == 1
         query = captured_query[0]
-        assert "111669149702" in query, f"Numeric ID should appear in query; got {query!r}"
-        assert "111669149702L" not in query, f"L suffix should be stripped from query; got {query!r}"
+        assert "111669149702L" in query, f"L suffix should be preserved in query; got {query!r}"
         assert "cpg.method.id(" in query, f"Query should use .id() traversal; got {query!r}"
 
     # Test 3: method_id without L suffix → works correctly

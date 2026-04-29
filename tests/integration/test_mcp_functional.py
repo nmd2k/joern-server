@@ -302,6 +302,28 @@ ALL_TOOLS: List[Tuple[str, Any, Optional[str]]] = [
     ("get_parent_classes_by_class_full_name",
      lambda i: {"class_full_name": i.class_full_name} if i.class_full_name else None,
      "C has no class inheritance (expected empty for .c files)"),
+
+    # Sprint 4 — vulnerability-hunting tools
+    ("find_methods",
+     lambda i: {"name_pattern": ".*"},                                          None),
+
+    ("find_calls",
+     lambda i: {"callee_name_pattern": ".*"},                                   None),
+
+    ("get_dataflow",
+     lambda i: ({"source_pattern": re.escape(i.method_full_name.split(".")[-1].split(":")[0]),
+                 "sink_pattern": re.escape(i.called_method_full_name.split(".")[-1].split(":")[0])}
+                if i.method_full_name and i.called_method_full_name else None),
+     "no taint path found between chosen method pair"),
+
+    ("get_call_arguments",
+     lambda i: {"call_id": i.call_id} if i.call_id else None,                  None),
+
+    ("find_literals",
+     lambda i: {"pattern": ".*"},                                               None),
+
+    ("get_method_location",
+     lambda i: {"method_id": i.method_id} if i.method_id else None,            None),
 ]
 
 
@@ -348,7 +370,7 @@ async def run_mcp_functional(mcp_url: str, info: CPGInfo, http: HTTP) -> List[To
             try:
                 resp = await client.call_tool(tool_name, args)
                 ms = int((time.perf_counter() - t0) * 1000)
-                text = resp[0].text if resp else ''
+                text = resp.content[0].text if resp.content else ''
             except Exception as e:
                 ms = int((time.perf_counter() - t0) * 1000)
                 results.append(ToolTestResult(

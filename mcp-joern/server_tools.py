@@ -246,8 +246,8 @@ def find_calls(
         parts.append(f'.where(_.method.fullName("{method_full_name_pattern}"))')
     parts.append(
         '.map(c => s"callId=${c.id}L calleeName=${c.name}'
-        ' containingMethod=${c.method.fullName.headOption.getOrElse("")}'
-        ' file=${c.filename} line=${c.lineNumber.getOrElse(-1)}").l'
+        ' containingMethod=${c.method.map(_.fullName).headOption.getOrElse("")}'
+        ' file=${c.method.file.name.headOption.getOrElse("")} line=${c.lineNumber.getOrElse(-1)}").l'
     )
     query = "".join(parts)
     response = joern_remote(query)
@@ -261,10 +261,9 @@ def get_call_arguments(call_id: str) -> list[str]:
     @param call_id: The call node ID (Long string, e.g. '111669149702L')
     @return: List of strings formatted as 'argIndex=<n> code=<code> typeFullName=<type> nodeId=<id>L'
     """
-    id_num = call_id.rstrip('L')
     query = (
-        f'cpg.call.id({id_num}).argument'
-        '.map(a => s"argIndex=${a.order} code=${a.code} typeFullName=${a.typeFullName} nodeId=${a.id}L").l'
+        f'cpg.call.id({call_id}).argument'
+        '.map(a => s"argIndex=${a.order} code=${a.code} typeFullName=${a.evalType.headOption.getOrElse("")} nodeId=${a.id}L").l'
     )
     response = joern_remote(query)
     return extract_list(response)
@@ -288,8 +287,8 @@ def find_literals(
         parts.append('.where(_.typeFullName(".*[Ii]nt.*|.*[Ll]ong.*|byte|short"))')
     parts.append(
         '.map(l => s"literalId=${l.id}L value=${l.code} typeFullName=${l.typeFullName}'
-        ' containingMethod=${l.method.fullName.headOption.getOrElse("")}'
-        ' file=${l.filename} line=${l.lineNumber.getOrElse(-1)}").l'
+        ' containingMethod=${l.method.map(_.fullName).headOption.getOrElse("")}'
+        ' file=${l.file.name.headOption.getOrElse("")} line=${l.lineNumber.getOrElse(-1)}").l'
     )
     query = "".join(parts)
     response = joern_remote(query)
@@ -318,8 +317,7 @@ def get_method_location(
     )
 
     if method_id:
-        id_num = method_id.rstrip('L')
-        query = f'cpg.method.id({id_num})' + map_expr
+        query = f'cpg.method.id({method_id})' + map_expr
     else:
         query = f'cpg.method.fullName("{method_full_name}")' + map_expr
 
@@ -349,7 +347,7 @@ def get_dataflow(
         f'val __src = cpg.call.name("{source_pattern}");'
         f'val __snk = cpg.call.name("{sink_pattern}");'
         '__snk.reachableByFlows(__src)'
-        '.map(flow => flow.elements.map(n => s"${n.code}@${n.filename}:${n.lineNumber.getOrElse(-1)}").mkString(" -> "))'
+        '.map(flow => flow.elements.map(n => s"${n.code}@${n.file.name.headOption.getOrElse("")}:${n.lineNumber.getOrElse(-1)}").mkString(" -> "))'
         '.l'
     )
     response = joern_remote(query)
