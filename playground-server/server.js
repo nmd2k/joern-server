@@ -12,11 +12,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PLAYGROUND_PORT || '3000', 10);
 const JOERN_PROXY_URL = process.env.JOERN_PROXY_URL || 'http://localhost:8080';
 const MCP_SERVER_URL = process.env.MCP_SERVER_URL || 'http://localhost:9000/sse';
-const PLAYGROUND_DIR = path.resolve(__dirname, process.env.PLAYGROUND_DIR || '../playground');
+const PLAYGROUND_DIR = path.resolve(__dirname, process.env.PLAYGROUND_DIR || './public');
 
 // ── Express App ────────────────────────────────────────────
 const app = express();
-app.use(express.json());
 
 // ── 1. Serve static playground files ─────────────────────
 // Verify playground directory exists
@@ -53,6 +52,8 @@ const apiProxy = createProxyMiddleware({
 app.use('/api', apiProxy);
 
 // ── 3. MCP Bridge ─────────────────────────────────────────
+// Apply express.json() ONLY to MCP routes so the raw body stream
+// is preserved for the API proxy (which needs it for POST /api/*).
 let mcpClient = null;
 let mcpConnected = false;
 let mcpConnectionError = null;
@@ -94,8 +95,8 @@ app.get('/mcp/tools', async (req, res) => {
   }
 });
 
-// POST /mcp/tools/:toolName — execute a tool
-app.post('/mcp/tools/:toolName', async (req, res) => {
+// POST /mcp/tools/:toolName — execute a tool (with JSON body parser)
+app.post('/mcp/tools/:toolName', express.json(), async (req, res) => {
   if (!mcpConnected || !mcpClient) {
     return res.status(503).json({
       error: 'MCP server not connected',
@@ -118,8 +119,8 @@ app.post('/mcp/tools/:toolName', async (req, res) => {
   }
 });
 
-// POST /mcp/tools/:toolName/call — alternative path
-app.post('/mcp/tools/:toolName/call', async (req, res) => {
+// POST /mcp/tools/:toolName/call — alternative path (with JSON body parser)
+app.post('/mcp/tools/:toolName/call', express.json(), async (req, res) => {
   req.params = req.params;
   await app._router.handle(req, res);
 });

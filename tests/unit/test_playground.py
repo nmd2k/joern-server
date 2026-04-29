@@ -105,7 +105,7 @@ class TestPlaygroundRoute:
         handler = _make_handler(proxy, "/playground")
 
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
         index_path = os.path.join(playground_dir, "index.html")
 
@@ -122,7 +122,7 @@ class TestPlaygroundRoute:
     def test_playground_css_servable(self):
         """playground/styles.css exists and contains valid CSS."""
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
         css_path = os.path.join(playground_dir, "styles.css")
         assert os.path.isfile(css_path), f"styles.css missing: {css_path}"
@@ -135,7 +135,7 @@ class TestPlaygroundRoute:
     def test_playground_js_servable(self):
         """playground/app.js and tool-definitions.js exist and are valid."""
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
 
         for js_file in ["app.js", "tool-definitions.js"]:
@@ -152,7 +152,7 @@ class TestPlaygroundRoute:
 
         # Just verify the path would be resolved correctly
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
         filename = "nonexistent.js"
         file_path = os.path.normpath(os.path.join(playground_dir, filename))
@@ -161,7 +161,7 @@ class TestPlaygroundRoute:
     def test_playground_proxied_resource_paths_use_relative_urls(self):
         """index.html should reference CSS/JS with /playground/ paths."""
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
         index_path = os.path.join(playground_dir, "index.html")
         with open(index_path, "r", encoding="utf-8") as f:
@@ -178,7 +178,7 @@ class TestPlaygroundToolDefinitions:
     def test_all_25_tools_defined(self):
         """All MCP tools (24 + parse_source) are in tool-definitions.js."""
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
         path = os.path.join(playground_dir, "tool-definitions.js")
         with open(path, "r", encoding="utf-8") as f:
@@ -208,7 +208,7 @@ class TestPlaygroundToolDefinitions:
     def test_tool_groups_present(self):
         """Tool definitions include group names for dropdown categorization."""
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
         path = os.path.join(playground_dir, "tool-definitions.js")
         with open(path, "r", encoding="utf-8") as f:
@@ -224,7 +224,7 @@ class TestPlaygroundToolDefinitions:
     def test_key_tool_definitions_have_descriptions(self):
         """Verify all 25 tool definitions have descriptions."""
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
         path = os.path.join(playground_dir, "tool-definitions.js")
         with open(path, "r", encoding="utf-8") as f:
@@ -250,7 +250,7 @@ class TestPlaygroundToolDefinitions:
     def test_escape_cpgql_helper_exists(self):
         """escapeCPGQL function should exist in tool-definitions.js."""
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
         path = os.path.join(playground_dir, "tool-definitions.js")
         with open(path, "r", encoding="utf-8") as f:
@@ -264,7 +264,7 @@ class TestPlaygroundAppStructure:
 
     def test_index_html_contains_parse_panel(self):
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
         path = os.path.join(playground_dir, "index.html")
         with open(path, "r", encoding="utf-8") as f:
@@ -275,7 +275,7 @@ class TestPlaygroundAppStructure:
 
     def test_index_html_contains_query_panel(self):
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
         path = os.path.join(playground_dir, "index.html")
         with open(path, "r", encoding="utf-8") as f:
@@ -285,7 +285,7 @@ class TestPlaygroundAppStructure:
 
     def test_index_html_contains_tool_panel(self):
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
         path = os.path.join(playground_dir, "index.html")
         with open(path, "r", encoding="utf-8") as f:
@@ -295,7 +295,7 @@ class TestPlaygroundAppStructure:
 
     def test_app_js_contains_vue_createapp(self):
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
         path = os.path.join(playground_dir, "app.js")
         with open(path, "r", encoding="utf-8") as f:
@@ -306,7 +306,7 @@ class TestPlaygroundAppStructure:
 
     def test_app_js_references_tool_definitions(self):
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
         path = os.path.join(playground_dir, "app.js")
         with open(path, "r", encoding="utf-8") as f:
@@ -321,7 +321,7 @@ class TestPlaygroundPathTraversal:
     def test_proxy_path_traversal_defaults_to_index(self):
         """The proxy should resolve /playground to index.html, not escape the directory."""
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
 
         # Simulate path resolution logic
@@ -356,7 +356,7 @@ class TestPlaygroundPathTraversal:
         proxy = _import_proxy()
 
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
 
         # Verify the proxy's playground handler logic (extracted from proxy.py)

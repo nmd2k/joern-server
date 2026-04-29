@@ -824,8 +824,10 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
             })
         except httpx.TimeoutException:
             self._send_json(HTTPStatus.GATEWAY_TIMEOUT, _json_error("query timed out", code="query_timeout"))
+            return
         except Exception as e:
             self._send_json(HTTPStatus.BAD_GATEWAY, _json_error(str(e), code="joern_error"))
+            return
 
     def _handle_graph_dfg(self) -> None:
         data, err = self._parse_request_json()
@@ -905,8 +907,10 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
                 })
         except httpx.TimeoutException:
             self._send_json(HTTPStatus.GATEWAY_TIMEOUT, _json_error("query timed out", code="query_timeout"))
+            return
         except Exception as e:
             self._send_json(HTTPStatus.BAD_GATEWAY, _json_error(str(e), code="joern_error"))
+            return
 
     def do_POST(self) -> None:  # noqa: N802 (http.server naming)
         if self.path == "/parse":
