@@ -89,6 +89,73 @@ def _normalize_language(language: str) -> str:
     return _LANGUAGE_ALIASES.get(language.lower(), language) if language else language
 
 
+def _dot_to_graph(dot_text: str) -> dict:
+    """Parse Joern DOT output into {nodes, edges} JSON structure."""
+    nodes: list[dict[str, str]] = []
+    edges: list[dict[str, str]] = []
+    if not dot_text:
+        return {"nodes": nodes, "edges": edges}
+
+    text = dot_text.strip()
+    idx = text.find("digraph")
+    if idx == -1:
+        return {"nodes": nodes, "edges": edges}
+    text = text[idx:]
+
+    m = re.match(r'digraph\s+"([^"]*)"\s*\{', text)
+    if not m:
+        return {"nodes": nodes, "edges": edges}
+
+    content_start = m.end()
+    depth = 1
+    content_end = content_start
+    for i, ch in enumerate(text[content_start:], start=content_start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                content_end = i
+                break
+
+    content = text[content_start:content_end].strip()
+    if not content:
+        return {"nodes": nodes, "edges": edges}
+
+    for line in content.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if line.endswith(";"):
+            line = line[:-1].strip()
+        if not line:
+            continue
+
+        edge_m = re.match(r'"([^"]*)"\s*->\s*"([^"]*)"(?:\s*\[([^\]]*)\])?', line)
+        if edge_m:
+            attrs_str = edge_m.group(3) or ""
+            label_m = re.search(r'label="([^"]*)"', attrs_str)
+            edges.append({
+                "source": edge_m.group(1),
+                "target": edge_m.group(2),
+                "label": label_m.group(1) if label_m else "",
+            })
+            continue
+
+        node_m = re.match(r'"([^"]*)"(?:\s*\[([^\]]*)\])?', line)
+        if node_m:
+            attrs_str = node_m.group(2) or ""
+            label_m = re.search(r'label="([^"]*)"', attrs_str)
+            shape_m = re.search(r'shape="([^"]*)"', attrs_str)
+            nodes.append({
+                "id": node_m.group(1),
+                "label": label_m.group(1) if label_m else "",
+                "shape": shape_m.group(1) if shape_m else "",
+            })
+
+    return {"nodes": nodes, "edges": edges}
+
+
 _LANGUAGE_EXT: dict[str, str] = {
     "c": ".c",
     "cpp": ".cpp",
@@ -457,36 +524,6 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_GATEWAY, {"error": str(e)})
             return
 
-        if self.path.startswith("/playground"):
-            # Resolve file relative to the playground directory.
-            rel = self.path[len("/playground"):].lstrip("/")
-            filename = rel or "index.html"
-            playground_dir = Path(__file__).resolve().parent.parent / "playground"
-            file_path = playground_dir / filename
-            # Prevent directory traversal
-            try:
-                file_path.resolve().relative_to(playground_dir.resolve())
-            except ValueError:
-                self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
-                return
-            if not file_path.is_file():
-                self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
-                return
-            # Content-Type mapping
-            ext_map = {
-                ".html": "text/html",
-                ".css": "text/css",
-                ".js": "application/javascript",
-            }
-            content_type = ext_map.get(file_path.suffix, "application/octet-stream")
-            data = file_path.read_bytes()
-            self.send_response(HTTPStatus.OK)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-            return
-
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
     def _handle_parse(self) -> None:
@@ -734,6 +771,147 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
         except Exception as e:
             self._send_json(HTTPStatus.BAD_GATEWAY, _json_error(str(e), code="cleanup_failed"))
 
+    def _handle_graph_cfg(self) -> None:
+        data, err = self._parse_request_json()
+        if err is not None or data is None:
+            self._send_json(HTTPStatus.BAD_REQUEST, err or _json_error("invalid request"))
+            return
+
+        method_full_name = str(data.get("method_full_name", "")).strip()
+        if not method_full_name:
+            self._send_json(HTTPStatus.BAD_REQUEST, _json_error("missing required field: method_full_name"))
+            return
+
+        sample_id = data.get("sample_id", "")
+        escaped = method_full_name.replace("\\", "\\\\").replace('"', '\\"')
+        query = f'cpg.method.fullName("{escaped}").dotCfg.l'
+
+        self._log_event("graph_cfg_request", method_full_name=method_full_name, sample_id=sample_id)
+
+        try:
+            with self.repl_semaphore:
+                resp = httpx.post(
+                    self.internal_url,
+                    json={"query": query},
+                    headers=_upstream_headers(self),
+                    timeout=self.query_timeout_sec,
+                )
+
+            resp.raise_for_status()
+            resp_json = resp.json()
+            success = resp_json.get("success", True)
+            if isinstance(success, str):
+                success = success.strip().lower() in ("true", "1", "yes")
+            if not success:
+                self._send_json(HTTPStatus.UNPROCESSABLE_ENTITY, _json_error(
+                    f"CFG query failed for method: {method_full_name}", code="query_failed"
+                ))
+                return
+
+            stdout = resp_json.get("stdout", "")
+            graph = _dot_to_graph(stdout)
+
+            if not graph["nodes"] and not graph["edges"]:
+                self._send_json(HTTPStatus.UNPROCESSABLE_ENTITY, _json_error(
+                    f"No CFG found for method: {method_full_name}", code="empty_result"
+                ))
+                return
+
+            self._send_json(HTTPStatus.OK, {
+                "nodes": graph["nodes"],
+                "edges": graph["edges"],
+                "method_full_name": method_full_name,
+            })
+        except httpx.TimeoutException:
+            self._send_json(HTTPStatus.GATEWAY_TIMEOUT, _json_error("query timed out", code="query_timeout"))
+            return
+        except Exception as e:
+            self._send_json(HTTPStatus.BAD_GATEWAY, _json_error(str(e), code="joern_error"))
+            return
+
+    def _handle_graph_dfg(self) -> None:
+        data, err = self._parse_request_json()
+        if err is not None or data is None:
+            self._send_json(HTTPStatus.BAD_REQUEST, err or _json_error("invalid request"))
+            return
+
+        method_full_name = str(data.get("method_full_name", "")).strip()
+        if not method_full_name:
+            self._send_json(HTTPStatus.BAD_REQUEST, _json_error("missing required field: method_full_name"))
+            return
+
+        sample_id = data.get("sample_id", "")
+        source_pattern = str(data.get("source_pattern", "")).strip()
+        sink_pattern = str(data.get("sink_pattern", "")).strip()
+
+        escaped = method_full_name.replace("\\", "\\\\").replace('"', '\\"')
+
+        if source_pattern and sink_pattern:
+            escaped_source = source_pattern.replace("\\", "\\\\").replace('"', '\\"')
+            escaped_sink = sink_pattern.replace("\\", "\\\\").replace('"', '\\"')
+            query = (
+                f'cpg.method.fullName("{escaped}")'
+                f'.reachableByFlows(cpg.code("{escaped_source}").l, cpg.code("{escaped_sink}").l).p'
+            )
+        else:
+            query = f'cpg.method.fullName("{escaped}").dotDdg.l'
+
+        self._log_event(
+            "graph_dfg_request",
+            method_full_name=method_full_name,
+            sample_id=sample_id,
+            source_pattern=source_pattern or None,
+            sink_pattern=sink_pattern or None,
+        )
+
+        try:
+            with self.repl_semaphore:
+                resp = httpx.post(
+                    self.internal_url,
+                    json={"query": query},
+                    headers=_upstream_headers(self),
+                    timeout=self.query_timeout_sec,
+                )
+
+            resp.raise_for_status()
+            resp_json = resp.json()
+            success = resp_json.get("success", True)
+            if isinstance(success, str):
+                success = success.strip().lower() in ("true", "1", "yes")
+            if not success:
+                self._send_json(HTTPStatus.UNPROCESSABLE_ENTITY, _json_error(
+                    f"DFG query failed for method: {method_full_name}", code="query_failed"
+                ))
+                return
+
+            stdout = resp_json.get("stdout", "")
+
+            if source_pattern and sink_pattern:
+                self._send_json(HTTPStatus.OK, {
+                    "flows_raw": stdout,
+                    "method_full_name": method_full_name,
+                    "source_pattern": source_pattern,
+                    "sink_pattern": sink_pattern,
+                })
+            else:
+                graph = _dot_to_graph(stdout)
+                if not graph["nodes"] and not graph["edges"]:
+                    self._send_json(HTTPStatus.UNPROCESSABLE_ENTITY, _json_error(
+                        f"No DFG found for method: {method_full_name}", code="empty_result"
+                    ))
+                    return
+                self._send_json(HTTPStatus.OK, {
+                    "nodes": graph["nodes"],
+                    "edges": graph["edges"],
+                    "method_full_name": method_full_name,
+                })
+        except httpx.TimeoutException:
+            self._send_json(HTTPStatus.GATEWAY_TIMEOUT, _json_error("query timed out", code="query_timeout"))
+            return
+        except Exception as e:
+            self._send_json(HTTPStatus.BAD_GATEWAY, _json_error(str(e), code="joern_error"))
+            return
+
     def do_POST(self) -> None:  # noqa: N802 (http.server naming)
         if self.path == "/parse":
             self._handle_parse()
@@ -741,6 +919,14 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
 
         if self.path == "/cleanup":
             self._handle_cleanup()
+            return
+
+        if self.path == "/graph/cfg":
+            self._handle_graph_cfg()
+            return
+
+        if self.path == "/graph/dfg":
+            self._handle_graph_dfg()
             return
 
         if self.path == "/cache-metrics":

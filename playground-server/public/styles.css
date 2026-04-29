@@ -74,3 +74,5 @@ textarea.mono{font-family:'SF Mono',Monaco,'Cascadia Code','Fira Code',Consolas,
 .param-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .param-grid.full{grid-template-columns:1fr}
 .info-row{color:#8b949e;font-size:11px;margin-top:4px}
+#cy{background:#0d1117;border-radius:4px}
+#cy:empty::after{content:"Render a graph to visualize";display:flex;align-items:center;justify-content:center;height:100%;color:#484f58;font-size:14px}

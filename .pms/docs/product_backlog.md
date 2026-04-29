@@ -56,7 +56,11 @@
 | PB-040 | MCP tool ↔ CPGQL translation table for playground                            | Feature | High     | Done      | 5      | 25 tools with CPGQL translation in tool-definitions.js; escapeCPGQL helper. |
 | PB-041 | Default filename `snippet.txt` causes empty CPG for C/C++ parsing             | Bug     | High     | Done      | 5-hotfix | `c2cpg` silently skips `.txt` files. Fix: `_LANGUAGE_EXT` mapping → `snippet.c` for C, `snippet.cpp` for C++, etc. See S5-HF01. |
 | PB-042 | Strip ANSI escape codes from /query-sync stdout in proxy                      | Bug     | Medium   | Done      | 5-hotfix | Joern REPL wraps stdout in terminal color codes. Fix: `_strip_ansi()` applied to stdout field only (no schema change). See S5-HF02. |
-| PB-043 | Web playground: interactive CPG visualization (CFG, DFG)                      | Feature | Medium   | Open     | 6      | Client request: render subgraphs (control-flow, data-flow) in-browser for debugging. Explore cytoscape.js or vis.js. |
+| PB-043 | Web playground: interactive CPG visualization (CFG, DFG)                      | Feature | High     | Done     | 6      | Client request: render subgraphs (control-flow, data-flow) in-browser for debugging. Implemented with cytoscape.js + /graph/cfg + /graph/dfg endpoints. Standalone Express server delivers playground on :3000. |
+| PB-044 | Standalone graph visualization service (extract from playground)              | Feature | High     | In Sprint | 7 | Extract graph vis into its own `/graph` page independent of 4-panel playground. See S7-004. |
+| PB-045 | All Joern graph types: PDG + AST endpoints                                   | Feature | High     | In Sprint | 7 | Add `/graph/pdg` and `/graph/ast` endpoints. See S7-001, S7-002. |
+| PB-046 | Graph node metadata: code, line, params, identifiers                         | Feature | High     | In Sprint | 7 | Enrich all `/graph/*` responses with per-node metadata map. Hover tooltip + click detail panel. See S7-003, S7-006, S7-007. |
+| PB-047 | Playground file/module organization refactor                                 | Chore   | Medium   | In Sprint | 7 | Split `app.js` into Vue components (parse/query/tools panels). See S7-008, S7-009. |
 
 
 ---
@@ -93,6 +97,7 @@
 | 2026-04-29 | agent  | Added PB-039–PB-040; Sprint 5 complete: web playground delivered. 368 tests pass, 0 failures. |
 | 2026-04-29 | agent  | Added PB-041 (Bug/High): default filename `snippet.txt` bypasses c2cpg C/C++ source detection; fixed with `_LANGUAGE_EXT` mapping. See S5-HF01. |
 | 2026-04-29 | agent  | Added PB-042 (Bug/Medium): ANSI escape codes in /query-sync stdout; fixed with `_strip_ansi()` in proxy. Added PB-043 (Feature): CPG visualization for Sprint 6. |
+| 2026-04-30 | agent  | Sprint 6 closed. Added PB-044–PB-047 for Sprint 7: standalone graph vis, all graph types, node metadata, playground refactor. |
 
 
 ---
@@ -165,10 +170,27 @@ Target items:
 - ~~PB-041 (S5-HF01): Default filename extension causes empty CPG for C/C++~~ Done (post-release hotfix)
 - ~~PB-042 (S5-HF02): Strip ANSI escape codes from /query-sync stdout~~ Done (post-release hotfix)
 
+### Sprint 6 (Week 13-14): Playground Standalone + Graph Visualization ✓ COMPLETE
+
+**Focus:** Extract playground into standalone Node.js/Express service with MCP arm integration + CPG graph visualization (CFG/DFG).
+
+Target items:
+- ~~PB-043 (S6-001–S6-010): Web playground standalone Express server + MCP bridge + cytoscape.js graph vis~~ Done
+
+### Sprint 7 (Week 15-16): Graph Vis Standalone + All Graph Types + Node Metadata + Playground Refactor
+
+**Focus:** Extract graph visualization into standalone service; add all Joern graph types (PDG/AST); interactive node metadata (hover tooltip + click detail panel); refactor playground into components.
+
+Target items:
+- PB-044 (S7-004): Standalone graph visualization service
+- PB-045 (S7-001, S7-002): All Joern graph types (PDG + AST)
+- PB-046 (S7-003, S7-006, S7-007): Graph node metadata + interactive UX
+- PB-047 (S7-008, S7-009): Playground component refactor
+
 ### Future Sprints
 
-- Sprint 6: Developer experience (PB-007, PB-010) + nice-to-have MCP tools (PB-034–PB-037) + CPG visualization (PB-043)
-- Sprint 7: Advanced features (PB-009, PB-011)
+- Sprint 8: Developer experience (PB-007, PB-010) + nice-to-have MCP tools (PB-034–PB-037)
+- Sprint 9: Advanced features (PB-009, PB-011)
 
 ---
 

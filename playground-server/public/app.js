@@ -13,7 +13,7 @@
   var app = Vue.createApp({
     data() {
       return {
-        panels: { parse: true, query: true, tool: true },
+        panels: { parse: true, query: true, tool: true, graph: true },
         sourceCode: '#include <stdio.h>\n\nint add(int a, int b) {\n    return a + b;\n}\n\nint main() {\n    printf("Sum: %d\\n", add(3, 4));\n    return 0;\n}',
         language: "c",
         sampleId: "playground-sample",
@@ -31,6 +31,12 @@
         toolRunning: false,
         toolResult: null,
         toolError: null,
+        graphType: "cfg",
+        graphMethod: "main",
+        graphData: null,
+        graphError: null,
+        graphLoading: false,
+        cyInstance: null,
         TOOLS: Tools,
         toolGroups: toolGroups,
         toolsByGroup: {}
@@ -88,7 +94,7 @@
         self.parseResult = null;
         self.parseError = null;
         try {
-          var resp = await fetch("/parse", {
+          var resp = await fetch("/api/parse", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -103,12 +109,12 @@
             self.parseResult = data;
             try {
               var cpgPath = data.cpg_path || "/workspace/cpg-out/" + self.sampleId;
-              await fetch("/query-sync", {
+              await fetch("/api/query-sync", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ query: 'importCpg("' + escapeCPGQL(cpgPath) + '")' })
               });
-              await fetch("/query-sync", {
+              await fetch("/api/query-sync", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ query: 'load_cpg("' + escapeCPGQL(cpgPath) + '")' })
@@ -126,7 +132,7 @@
       doCleanup: async function() {
         var self = this;
         try {
-          await fetch("/cleanup", {
+          await fetch("/api/cleanup", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ sample_id: self.sampleId })
@@ -148,7 +154,7 @@
         self.rawResult = null;
         self.rawError = null;
         try {
-          var resp = await fetch("/query-sync", {
+          var resp = await fetch("/api/query-sync", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ query: query })
@@ -183,6 +189,80 @@
         var text = this.formattedToolResult;
         navigator.clipboard.writeText(text).catch(function() {});
       },
+      renderGraph: async function() {
+        var self = this;
+        if (!self.graphMethod.trim()) return;
+        self.graphLoading = true;
+        self.graphError = null;
+        self.graphData = null;
+
+        try {
+          var resp = await fetch("/api/graph/" + self.graphType, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ method_full_name: self.graphMethod.trim() })
+          });
+          var data = await resp.json();
+          if (resp.ok && data.nodes) {
+            self.graphData = data;
+            self._initCytoscape(data);
+          } else {
+            self.graphError = JSON.stringify(data, null, 2);
+          }
+        } catch (e) {
+          self.graphError = "Network error: " + e.message;
+        } finally {
+          self.graphLoading = false;
+        }
+      },
+      _initCytoscape: function(graphData) {
+        var self = this;
+        if (self.cyInstance) {
+          self.cyInstance.destroy();
+          self.cyInstance = null;
+        }
+
+        var elements = [];
+
+        for (var i = 0; i < graphData.nodes.length; i++) {
+          var n = graphData.nodes[i];
+          var label = n.code || n.label || n.id;
+          if (label.length > 30) label = label.substring(0, 30) + "...";
+
+          var nodeColor = "#58a6ff";
+          if (n.label && n.label.indexOf("METHOD") !== -1) nodeColor = "#d2a8ff";
+          else if (n.label && n.label.indexOf("CALL") !== -1) nodeColor = "#3fb950";
+          else if (n.label && n.label.indexOf("LITERAL") !== -1) nodeColor = "#d29922";
+          else if (n.label && n.label.indexOf("IDENTIFIER") !== -1) nodeColor = "#f0883e";
+          else if (n.label && n.label.indexOf("BLOCK") !== -1) nodeColor = "#79c0ff";
+          else if (n.label && n.label.indexOf("CONTROL") !== -1) nodeColor = "#ff7b72";
+
+          elements.push({
+            data: { id: n.id, label: label },
+            style: { 'background-color': nodeColor }
+          });
+        }
+
+        for (var j = 0; j < graphData.edges.length; j++) {
+          var e = graphData.edges[j];
+          elements.push({
+            data: { id: "e" + j, source: e.source, target: e.target, label: e.label || "" }
+          });
+        }
+
+        self.cyInstance = cytoscape({
+          container: document.getElementById('cy'),
+          elements: elements,
+          style: [
+            { selector: 'node', style: { 'label': 'data(label)', 'text-valign': 'bottom', 'text-halign': 'center', 'color': '#c9d1d9', 'font-size': '11px', 'text-outline-width': 2, 'text-outline-color': '#0d1117', 'width': 'mapData(weight, 0, 100, 30, 80)', 'height': 'mapData(weight, 0, 100, 30, 80)' } },
+            { selector: 'edge', style: { 'width': 2, 'line-color': '#30363d', 'target-arrow-color': '#58a6ff', 'target-arrow-shape': 'triangle', 'curve-style': 'bezier', 'label': 'data(label)', 'font-size': '10px', 'color': '#484f58', 'text-background-color': '#0d1117', 'text-background-opacity': 1 } },
+            { selector: ':selected', style: { 'border-width': 3, 'border-color': '#58a6ff' } }
+          ],
+          layout: { name: 'breadthfirst', directed: true, spacingFactor: 1.5 },
+          minZoom: 0.1,
+          maxZoom: 3
+        });
+      },
       onToolChange: function() {
         this.toolResult = null;
         this.toolError = null;
@@ -208,9 +288,10 @@
 
         try {
           if (def._custom) {
+            // parse_source — call /api/parse directly
             var sampleId = self.toolParams.sample_id || "playground-tool";
             var lang = self.toolParams.language || "";
-            var resp = await fetch("/parse", {
+            var resp = await fetch("/api/parse", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -223,12 +304,12 @@
             var parseData = await resp.json();
             if (resp.ok && parseData.ok && parseData.cpg_path) {
               var cpgPath = parseData.cpg_path;
-              await fetch("/query-sync", {
+              await fetch("/api/query-sync", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ query: 'importCpg("' + escapeCPGQL(cpgPath) + '")' })
               });
-              await fetch("/query-sync", {
+              await fetch("/api/query-sync", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ query: 'load_cpg("' + escapeCPGQL(cpgPath) + '")' })
@@ -239,27 +320,19 @@
               self.toolResult = parseData;
             }
           } else {
-            var query;
-            try {
-              query = def.cpgql(self.toolParams);
-            } catch (e) {
-              self.toolError = "CPGQL generation error: " + e.message;
-              self.toolRunning = false;
-              return;
-            }
-            var resp2 = await fetch("/query-sync", {
+            // MCP tools — call the MCP bridge on the Express server
+            var resp = await fetch("/mcp/tools/" + self.selectedTool, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ query: query })
+              body: JSON.stringify(self.toolParams)
             });
-            var data = await resp2.json();
-            if (resp2.ok && data.success !== false) {
+            var data = await resp.json();
+            if (resp.ok) {
               self.toolResult = data;
             } else {
               self.toolError = JSON.stringify(data, null, 2);
               self.toolResult = data;
             }
-            self._addHistory(query, self.toolResult);
           }
         } catch (e) {
           self.toolError = "Network error: " + e.message;

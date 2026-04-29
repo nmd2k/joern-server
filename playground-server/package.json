@@ -1,0 +1,16 @@
+{
+  "name": "joern-playground-server",
+  "version": "1.0.0",
+  "description": "Standalone playground server for Joern CPG analysis",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "http-proxy-middleware": "^3.0.0",
+    "@modelcontextprotocol/sdk": "^1.9.0"
+  }
+}
