@@ -1,4 +1,4 @@
-"""S5-006: Integration tests for web playground.
+"""S5-006/S6-009: Tests for playground frontend (standalone service).
 
 Covers:
   1. GET /playground returns valid HTML
@@ -6,9 +6,10 @@ Covers:
   3. GET /playground/app.js returns JavaScript
   4. GET /playground/tool-definitions.js returns JavaScript
   5. GET /playground/nonexistent returns 404
-  6. Tool definitions contain all 25 tools
-  7. CPGQL translation for key tools produces valid queries
-  8. Path traversal protection on playground routes
+  6. Tool definitions contain all 25 tools with descriptions
+  7. Parameter schemas for tool UI rendering
+  8. Path traversal protection for static file serving
+  9. Vue app structure (createApp, mount, panels)
 
 Run with:
     pytest tests/unit/test_playground.py -v
@@ -220,8 +221,8 @@ class TestPlaygroundToolDefinitions:
         for group in expected_groups:
             assert group in content, f"Tool group '{group}' missing"
 
-    def test_key_cpgql_translations_contain_expected_patterns(self):
-        """Verify CPGQL translation functions produce valid-looking queries."""
+    def test_key_tool_definitions_have_descriptions(self):
+        """Verify all 25 tool definitions have descriptions."""
         playground_dir = os.path.normpath(
             os.path.join(os.path.dirname(__file__), "..", "..", "playground")
         )
@@ -229,23 +230,22 @@ class TestPlaygroundToolDefinitions:
         with open(path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        # get_method_callees should call the Scala helper function
-        assert 'get_method_callees("' in content
+        # All tools should have description field (no CPGQL translation in frontend)
+        assert "description" in content
 
-        # find_methods should build cpg.method chain
-        assert "cpg.method" in content
+        # Tool names must still be defined
+        assert "get_method_callees" in content
+        assert "find_methods" in content
+        assert "find_calls" in content
+        assert "get_dataflow" in content
+        assert "get_call_arguments" in content
+        assert "load_cpg" in content
 
-        # find_calls should build cpg.call chain
-        assert "cpg.call.name" in content
+        # parse_source must have _custom flag (calls /api/parse directly)
+        assert "_custom: true" in content
 
-        # get_dataflow should use reachableByFlows
-        assert "reachableByFlows" in content
-
-        # get_call_arguments should use cpg.call.id
-        assert "cpg.call.id" in content
-
-        # load_cpg should call importCpg
-        assert "importCpg" in content
+        # escapeCPGQL helper must still exist (used by raw query panel)
+        assert "escapeCPGQL" in content
 
     def test_escape_cpgql_helper_exists(self):
         """escapeCPGQL function should exist in tool-definitions.js."""

@@ -94,7 +94,7 @@
         self.parseResult = null;
         self.parseError = null;
         try {
-          var resp = await fetch("/parse", {
+          var resp = await fetch("/api/parse", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -109,12 +109,12 @@
             self.parseResult = data;
             try {
               var cpgPath = data.cpg_path || "/workspace/cpg-out/" + self.sampleId;
-              await fetch("/query-sync", {
+              await fetch("/api/query-sync", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ query: 'importCpg("' + escapeCPGQL(cpgPath) + '")' })
               });
-              await fetch("/query-sync", {
+              await fetch("/api/query-sync", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ query: 'load_cpg("' + escapeCPGQL(cpgPath) + '")' })
@@ -132,7 +132,7 @@
       doCleanup: async function() {
         var self = this;
         try {
-          await fetch("/cleanup", {
+          await fetch("/api/cleanup", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ sample_id: self.sampleId })
@@ -154,7 +154,7 @@
         self.rawResult = null;
         self.rawError = null;
         try {
-          var resp = await fetch("/query-sync", {
+          var resp = await fetch("/api/query-sync", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ query: query })
@@ -197,7 +197,7 @@
         self.graphData = null;
 
         try {
-          var resp = await fetch("/graph/" + self.graphType, {
+          var resp = await fetch("/api/graph/" + self.graphType, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ method_full_name: self.graphMethod.trim() })
@@ -288,9 +288,10 @@
 
         try {
           if (def._custom) {
+            // parse_source — call /api/parse directly
             var sampleId = self.toolParams.sample_id || "playground-tool";
             var lang = self.toolParams.language || "";
-            var resp = await fetch("/parse", {
+            var resp = await fetch("/api/parse", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -303,12 +304,12 @@
             var parseData = await resp.json();
             if (resp.ok && parseData.ok && parseData.cpg_path) {
               var cpgPath = parseData.cpg_path;
-              await fetch("/query-sync", {
+              await fetch("/api/query-sync", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ query: 'importCpg("' + escapeCPGQL(cpgPath) + '")' })
               });
-              await fetch("/query-sync", {
+              await fetch("/api/query-sync", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ query: 'load_cpg("' + escapeCPGQL(cpgPath) + '")' })
@@ -319,27 +320,19 @@
               self.toolResult = parseData;
             }
           } else {
-            var query;
-            try {
-              query = def.cpgql(self.toolParams);
-            } catch (e) {
-              self.toolError = "CPGQL generation error: " + e.message;
-              self.toolRunning = false;
-              return;
-            }
-            var resp2 = await fetch("/query-sync", {
+            // MCP tools — call the MCP bridge on the Express server
+            var resp = await fetch("/mcp/tools/" + self.selectedTool, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ query: query })
+              body: JSON.stringify(self.toolParams)
             });
-            var data = await resp2.json();
-            if (resp2.ok && data.success !== false) {
+            var data = await resp.json();
+            if (resp.ok) {
               self.toolResult = data;
             } else {
               self.toolError = JSON.stringify(data, null, 2);
               self.toolResult = data;
             }
-            self._addHistory(query, self.toolResult);
           }
         } catch (e) {
           self.toolError = "Network error: " + e.message;

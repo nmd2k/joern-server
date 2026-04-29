@@ -524,36 +524,6 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_GATEWAY, {"error": str(e)})
             return
 
-        if self.path.startswith("/playground"):
-            # Resolve file relative to the playground directory.
-            rel = self.path[len("/playground"):].lstrip("/")
-            filename = rel or "index.html"
-            playground_dir = Path(__file__).resolve().parent.parent / "playground"
-            file_path = playground_dir / filename
-            # Prevent directory traversal
-            try:
-                file_path.resolve().relative_to(playground_dir.resolve())
-            except ValueError:
-                self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
-                return
-            if not file_path.is_file():
-                self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
-                return
-            # Content-Type mapping
-            ext_map = {
-                ".html": "text/html",
-                ".css": "text/css",
-                ".js": "application/javascript",
-            }
-            content_type = ext_map.get(file_path.suffix, "application/octet-stream")
-            data = file_path.read_bytes()
-            self.send_response(HTTPStatus.OK)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-            return
-
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
     def _handle_parse(self) -> None:
