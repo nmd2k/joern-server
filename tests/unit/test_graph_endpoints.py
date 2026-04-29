@@ -190,14 +190,14 @@ class TestGraphPdg:
 class TestGraphAst:
     """Tests for POST /graph/ast endpoint."""
 
-    # Simulated Joern stdout returning Scala tuples for AST
+    # Simulated Joern stdout returning Scala tuples for AST (7 fields, no argumentIndex)
     AST_TUPLES_STDOUT = (
-        'val res0: List[(Long, String, Option[Int], Option[Int], Int, Int, String, Option[Long])] = List(\n'
-        '(1, "void main()", Some(1), Some(1), 1, -1, "METHOD", None),\n'
-        '(2, "x = 1", Some(2), Some(3), 2, -1, "ASSIGNMENT", Some(1)),\n'
-        '(3, "x", Some(2), Some(3), 3, 1, "IDENTIFIER", Some(2)),\n'
-        '(4, "1", Some(2), Some(7), 4, 2, "LITERAL", Some(2)),\n'
-        '(5, "foo()", Some(3), Some(3), 5, -1, "CALL", Some(1))\n'
+        'val res0: List[(Long, String, Option[Int], Option[Int], Int, String, Option[Long])] = List(\n'
+        '(1, "void main()", Some(1), Some(1), 1, "METHOD", None),\n'
+        '(2, "x = 1", Some(2), Some(3), 2, "ASSIGNMENT", Some(1)),\n'
+        '(3, "x", Some(2), Some(3), 3, "IDENTIFIER", Some(2)),\n'
+        '(4, "1", Some(2), Some(7), 4, "LITERAL", Some(2)),\n'
+        '(5, "foo()", Some(3), Some(3), 5, "CALL", Some(1))\n'
         ')'
     )
 
@@ -338,12 +338,12 @@ class TestGraphAst:
         assert "node_type" in meta1
         assert meta1["node_type"] == "METHOD"
 
-        # Check metadata for node 3 (IDENTIFIER with argument_index=1)
+        # Check metadata for node 3 (IDENTIFIER)
         assert "3" in metadata
         meta3 = metadata["3"]
         assert meta3["code"] == "x"
         assert meta3["node_type"] == "IDENTIFIER"
-        assert meta3["argument_index"] == 1
+        assert meta3["argument_index"] == -1
         assert meta3["order"] == 3
 
 
@@ -356,9 +356,9 @@ class TestFetchNodeMetadata:
     """Tests for _fetch_node_metadata() helper."""
 
     METADATA_STDOUT = (
-        'val res0: List[(Long, String, Option[Int], Option[Int], Int, Int, String)] = List(\n'
-        '(1, "void main()", Some(1), Some(1), 1, -1, "METHOD"),\n'
-        '(2, "x = 1", Some(2), Some(3), 2, -1, "ASSIGNMENT")\n'
+        'val res0: List[(Long, String, Option[Int], Option[Int], Int, String)] = List(\n'
+        '(1, "void main()", Some(1), Some(1), 1, "METHOD"),\n'
+        '(2, "x = 1", Some(2), Some(3), 2, "ASSIGNMENT")\n'
         ')'
     )
 
@@ -398,10 +398,10 @@ class TestFetchNodeMetadata:
         # Create 120 node IDs
         node_ids = [str(i) for i in range(1, 121)]
 
-        # Build mock stdout for a single batch of 50 tuples
+        # Build mock stdout for a single batch of 50 tuples (6 fields)
         tuples_lines = []
         for i in range(1, 51):
-            tuples_lines.append(f'({i}, "node_{i}", Some({i}), Some(1), {i}, -1, "TYPE_{i}")')
+            tuples_lines.append(f'({i}, "node_{i}", Some({i}), Some(1), {i}, "TYPE_{i}")')
         batch_stdout = f'val res0: List[...] = List(\n{",\n".join(tuples_lines)}\n)'
 
         mock_resp = MagicMock()

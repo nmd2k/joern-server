@@ -288,10 +288,17 @@ def _split_scala_tuple(tuple_str: str) -> list[str]:
 
 
 def _parse_scala_field(field: str):
-    """Parse a single Scala value (string, int, Some(x), None) into Python."""
+    """Parse a single Scala value (string, int, Some(value=...), None) into Python."""
     field = field.strip()
     if not field:
         return None
+    # Strip trailing "L" suffix from Scala Long literals
+    long_suffix = False
+    if field.endswith("L") and len(field) > 1:
+        rest = field[:-1]
+        if rest.isdigit() or (rest.startswith("-") and rest[1:].isdigit()):
+            field = rest
+            long_suffix = True
     if field.startswith('"') and field.endswith('"') and len(field) >= 2:
         inner = field[1:-1]
         return inner.replace('\\"', '"').replace("\\\\", "\\")
@@ -299,6 +306,14 @@ def _parse_scala_field(field: str):
         return None
     if field.startswith("Some(") and field.endswith(")"):
         inner_val = field[5:-1].strip()
+        # Handle `Some(value = 42)` format from Option[Int] output
+        eq_idx = inner_val.find(" = ")
+        if eq_idx != -1:
+            num_str = inner_val[eq_idx + 3:].strip()
+            try:
+                return int(num_str)
+            except ValueError:
+                return inner_val
         try:
             return int(inner_val)
         except ValueError:
@@ -310,7 +325,36 @@ def _parse_scala_field(field: str):
 
 
 def _parse_metadata_tuples(stdout: str) -> dict[str, dict]:
-    """Parse 7-field metadata tuples from Joern stdout into {nodeId: metadata}."""
+    """Parse 6-field metadata tuples (id, code, line, column, order, label) into {nodeId: metadata}."""
+    metadata: dict[str, dict] = {}
+    for t in _extract_scala_tuples(stdout):
+        fields = _split_scala_tuple(t)
+        if len(fields) < 6:
+            continue
+        try:
+            fid = _parse_scala_field(fields[0])
+            code = _parse_scala_field(fields[1])
+            line_num = _parse_scala_field(fields[2])
+            col_num = _parse_scala_field(fields[3])
+            order = _parse_scala_field(fields[4])
+            node_type = _parse_scala_field(fields[5])
+            metadata[str(fid)] = {
+                "code": code if isinstance(code, str) else str(code) if code is not None else "",
+                "line_number": line_num,
+                "column_number": col_num,
+                "order": order if order is not None else -1,
+                "argument_index": -1,
+                "node_type": node_type if isinstance(node_type, str) else "",
+            }
+        except Exception:
+            continue
+    return metadata
+
+
+def _parse_ast_tuples(stdout: str) -> tuple[list[dict], list[dict], dict[str, dict]]:
+    """Parse 7-field AST tuples (id, code, line, column, order, label, parentId) into (nodes, edges, metadata)."""
+    nodes: list[dict] = []
+    edges: list[dict] = []
     metadata: dict[str, dict] = {}
     for t in _extract_scala_tuples(stdout):
         fields = _split_scala_tuple(t)
@@ -322,39 +366,8 @@ def _parse_metadata_tuples(stdout: str) -> dict[str, dict]:
             line_num = _parse_scala_field(fields[2])
             col_num = _parse_scala_field(fields[3])
             order = _parse_scala_field(fields[4])
-            arg_idx = _parse_scala_field(fields[5])
-            node_type = _parse_scala_field(fields[6])
-            metadata[str(fid)] = {
-                "code": code if isinstance(code, str) else str(code) if code is not None else "",
-                "line_number": line_num,
-                "column_number": col_num,
-                "order": order if order is not None else -1,
-                "argument_index": arg_idx if arg_idx is not None else -1,
-                "node_type": node_type if isinstance(node_type, str) else "",
-            }
-        except Exception:
-            continue
-    return metadata
-
-
-def _parse_ast_tuples(stdout: str) -> tuple[list[dict], list[dict], dict[str, dict]]:
-    """Parse 8-field AST tuples into (nodes, edges, metadata)."""
-    nodes: list[dict] = []
-    edges: list[dict] = []
-    metadata: dict[str, dict] = {}
-    for t in _extract_scala_tuples(stdout):
-        fields = _split_scala_tuple(t)
-        if len(fields) < 8:
-            continue
-        try:
-            fid = _parse_scala_field(fields[0])
-            code = _parse_scala_field(fields[1])
-            line_num = _parse_scala_field(fields[2])
-            col_num = _parse_scala_field(fields[3])
-            order = _parse_scala_field(fields[4])
-            arg_idx = _parse_scala_field(fields[5])
-            node_type = _parse_scala_field(fields[6])
-            parent_id = _parse_scala_field(fields[7])
+            node_type = _parse_scala_field(fields[5])
+            parent_id = _parse_scala_field(fields[6])
             node_id_str = str(fid)
             nodes.append({
                 "id": node_id_str,
@@ -365,7 +378,7 @@ def _parse_ast_tuples(stdout: str) -> tuple[list[dict], list[dict], dict[str, di
                 "line_number": line_num,
                 "column_number": col_num,
                 "order": order if order is not None else -1,
-                "argument_index": arg_idx if arg_idx is not None else -1,
+                "argument_index": -1,
                 "node_type": node_type if isinstance(node_type, str) else "",
             }
             if parent_id is not None:
@@ -979,11 +992,11 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
 
         for i in range(0, len(numeric_ids), max_batch):
             batch = numeric_ids[i:i + max_batch]
-            id_list = ", ".join(str(nid) for nid in batch)
+            id_list = ", ".join(f"{nid}L" for nid in batch)
             query = (
-                f"cpg.all.id({id_list}).map(n =>"
+                f"cpg.all.id({id_list}).collectAll[AstNode].map(n =>"
                 f" (n.id, n.code, n.lineNumber, n.columnNumber,"
-                f" n.order, n.argumentIndex, n.label)"
+                f" n.order, n.label)"
                 f").l"
             )
             try:
@@ -1244,7 +1257,7 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
         query = (
             f'cpg.method.fullName("{escaped}").ast.map(node => '
             f"(node.id, node.code, node.lineNumber, node.columnNumber, "
-            f"node.order, node.argumentIndex, node.label, "
+            f"node.order, node.label, "
             f"node.astParent.id)"
             f").l"
         )
