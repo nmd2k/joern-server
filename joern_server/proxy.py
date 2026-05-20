@@ -1,18 +1,23 @@
 import datetime
 import hashlib
+import io
 import json
 import os
 import re
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import threading
 import time
+import uuid
+import zipfile
 from collections import OrderedDict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 
@@ -199,6 +204,151 @@ def _default_filename(language: str) -> str:
 
 def _json_error(msg: str, *, code: str = "bad_request") -> dict[str, str]:
     return {"error": msg, "code": code}
+
+
+def _query_bool(value: Optional[str], default: bool = False) -> bool:
+    if value is None:
+        return default
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _validate_repo_path(path: str) -> Optional[str]:
+    """Return error message if path is invalid for repo ingest, else None."""
+    if not path or not isinstance(path, str):
+        return "path must be a non-empty string"
+    if "\0" in path:
+        return "path contains null byte"
+    normalized = path.replace("\\", "/")
+    if normalized.startswith("/"):
+        return "path must be relative (no leading /)"
+    parts = normalized.split("/")
+    if ".." in parts:
+        return "path must not contain .."
+    return None
+
+
+def _canonical_tree_hash(files: dict[str, str]) -> str:
+    """SHA256 of sorted path + NUL + sha256(content) + newline per file."""
+    h = hashlib.sha256()
+    for path in sorted(files.keys()):
+        content_hash = hashlib.sha256(files[path].encode("utf-8")).hexdigest()
+        h.update(path.encode("utf-8"))
+        h.update(b"\0")
+        h.update(content_hash.encode("ascii"))
+        h.update(b"\n")
+    return h.hexdigest()
+
+
+def _parse_allowed_roots() -> list[Path]:
+    raw = _env_str("PARSE_REPO_ALLOWED_ROOTS", "/workspace/datasets")
+    roots: list[Path] = []
+    for part in raw.split(":"):
+        part = part.strip()
+        if part:
+            roots.append(Path(part).resolve())
+    return roots or [Path("/workspace/datasets").resolve()]
+
+
+def _is_under_allowed_root(candidate: Path, allowed_roots: list[Path]) -> bool:
+    resolved = candidate.resolve()
+    for root in allowed_roots:
+        try:
+            resolved.relative_to(root)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _collect_tree_files(
+    root: Path,
+    *,
+    max_files: int,
+    max_bytes: int,
+) -> tuple[Optional[dict[str, str]], Optional[dict]]:
+    """Walk root and collect relative path → UTF-8 content. Enforce limits."""
+    if not root.is_dir():
+        return None, _json_error(f"source path is not a directory: {root}", code="invalid_source_root")
+    files: dict[str, str] = {}
+    total_bytes = 0
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root).as_posix()
+        err = _validate_repo_path(rel)
+        if err is not None:
+            return None, _json_error(f"invalid path in tree: {rel}: {err}", code="invalid_path")
+        if len(files) >= max_files:
+            return None, _json_error(
+                f"repo exceeds max file count ({max_files})",
+                code="payload_too_large",
+            )
+        try:
+            raw = path.read_bytes()
+        except OSError as exc:
+            return None, _json_error(f"failed to read {rel}: {exc}", code="bad_request")
+        total_bytes += len(raw)
+        if total_bytes > max_bytes:
+            return None, _json_error(
+                f"repo exceeds max total bytes ({max_bytes})",
+                code="payload_too_large",
+            )
+        files[rel] = raw.decode("utf-8")
+    if not files:
+        return None, _json_error("repo tree contains no files", code="empty_tree")
+    return files, None
+
+
+def _parse_multipart_archive(body: bytes, content_type: str) -> tuple[Optional[bytes], Optional[dict]]:
+    """Extract the ``archive`` field from multipart/form-data."""
+    if "multipart/form-data" not in (content_type or ""):
+        return None, _json_error("Content-Type must be multipart/form-data", code="bad_request")
+    m = re.search(r"boundary=([^;\s]+)", content_type, re.IGNORECASE)
+    if not m:
+        return None, _json_error("missing multipart boundary", code="bad_request")
+    boundary = m.group(1).strip().strip('"')
+    delimiter = ("--" + boundary).encode("utf-8")
+    for part in body.split(delimiter):
+        part = part.strip(b"\r\n")
+        if not part or part == b"--":
+            continue
+        if part.endswith(b"--"):
+            part = part[:-2].rstrip(b"\r\n")
+        header_end = part.find(b"\r\n\r\n")
+        if header_end == -1:
+            continue
+        headers_blob = part[:header_end].decode("utf-8", errors="replace")
+        payload = part[header_end + 4:]
+        if payload.endswith(b"\r\n"):
+            payload = payload[:-2]
+        name_m = re.search(r'name="([^"]+)"', headers_blob)
+        if not name_m or name_m.group(1) != "archive":
+            continue
+        return payload, None
+    return None, _json_error('missing multipart field "archive"', code="bad_request")
+
+
+def _extract_archive(archive_bytes: bytes, dest: Path, filename_hint: str = "") -> Optional[dict]:
+    """Extract zip or tar.gz archive into dest. Returns error dict on failure."""
+    dest.mkdir(parents=True, exist_ok=True)
+    lower = filename_hint.lower()
+    buf = io.BytesIO(archive_bytes)
+    try:
+        if lower.endswith(".zip") or archive_bytes[:2] == b"PK":
+            with zipfile.ZipFile(buf) as zf:
+                zf.extractall(dest)
+            return None
+    except zipfile.BadZipFile:
+        buf.seek(0)
+    except Exception as exc:
+        return _json_error(f"failed to extract zip archive: {exc}", code="bad_request")
+    try:
+        buf.seek(0)
+        with tarfile.open(fileobj=buf, mode="r:*") as tf:
+            tf.extractall(dest, filter="data")
+        return None
+    except Exception as exc:
+        return _json_error(f"unsupported or corrupt archive: {exc}", code="bad_request")
 
 
 def _extract_scala_tuples(stdout: str) -> list[str]:
@@ -636,7 +786,13 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
     parse_bin: str = "/opt/joern/joern-cli/joern-parse"
     cpg_out_dir: str = "/workspace/cpg-out"
     cpg_archive_dir: str = "/workspace/cpg-archive"
+    repo_uploads_dir: str = "/workspace/repo-uploads"
     parse_timeout_sec: int = 900
+    parse_repo_timeout_sec: int = 1800
+    parse_repo_max_files: int = 2000
+    parse_repo_max_bytes: int = 50_000_000
+    parse_repo_max_archive_bytes: int = 500 * 1024 * 1024
+    parse_repo_upload_ttl_hours: int = 24
     query_timeout_sec: int = 600
     query_cache: Optional[LRUCache] = None
     cpg_registry: Optional[CPGRegistry] = None
@@ -970,6 +1126,443 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.BAD_GATEWAY, _json_error(str(e), code="parse_failed"))
         finally:
             shutil.rmtree(tmp_src_dir, ignore_errors=True)
+
+    def _request_path(self) -> str:
+        return urlparse(self.path).path
+
+    def _request_query(self) -> dict[str, list[str]]:
+        return parse_qs(urlparse(self.path).query, keep_blank_values=True)
+
+    def _materialize_tree(self, files: dict[str, str], dest: Path) -> None:
+        for rel_path, content in files.items():
+            out_path = dest / rel_path
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(content, encoding="utf-8", newline="\n")
+
+    def _read_jsonl_repo_files(self) -> tuple[Optional[dict[str, str]], Optional[dict]]:
+        max_files = self.parse_repo_max_files
+        max_bytes = self.parse_repo_max_bytes
+        files: dict[str, str] = {}
+        total_bytes = 0
+        length_hdr = self.headers.get("Content-Length")
+        try:
+            remaining = int(length_hdr) if length_hdr else None
+        except ValueError:
+            return None, _json_error("invalid Content-Length", code="bad_request")
+
+        while True:
+            if remaining is not None and remaining <= 0:
+                break
+            line = self.rfile.readline()
+            if not line:
+                break
+            if remaining is not None:
+                remaining -= len(line)
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                obj = json.loads(stripped.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                return None, _json_error(f"invalid JSONL line: {exc}", code="bad_request")
+            if not isinstance(obj, dict):
+                return None, _json_error("JSONL line must be a JSON object", code="bad_request")
+            rel_path = obj.get("path")
+            content = obj.get("content")
+            if not isinstance(rel_path, str) or not isinstance(content, str):
+                return None, _json_error('each JSONL line requires "path" and "content" strings', code="bad_request")
+            err = _validate_repo_path(rel_path)
+            if err is not None:
+                return None, _json_error(err, code="invalid_path")
+            if len(files) >= max_files:
+                return None, _json_error(
+                    f"repo exceeds max file count ({max_files})",
+                    code="payload_too_large",
+                )
+            encoded_len = len(content.encode("utf-8"))
+            total_bytes += encoded_len
+            if total_bytes > max_bytes:
+                return None, _json_error(
+                    f"repo exceeds max total bytes ({max_bytes})",
+                    code="payload_too_large",
+                )
+            files[rel_path.replace("\\", "/")] = content
+
+        if not files:
+            return None, _json_error("repo tree contains no files", code="empty_tree")
+        return files, None
+
+    def _upload_meta_path(self, upload_id: str) -> Path:
+        return Path(self.repo_uploads_dir) / upload_id / "meta.json"
+
+    def _upload_tree_path(self, upload_id: str) -> Path:
+        return Path(self.repo_uploads_dir) / upload_id / "tree"
+
+    def _load_upload_meta(self, upload_id: str) -> tuple[Optional[dict], Optional[dict]]:
+        safe_id = re.sub(r"[^a-zA-Z0-9-]", "", upload_id)
+        if not safe_id or safe_id != upload_id:
+            return None, _json_error("invalid upload_id", code="bad_request")
+        meta_path = self._upload_meta_path(upload_id)
+        if not meta_path.exists():
+            return None, _json_error(f"upload not found: {upload_id}", code="upload_not_found")
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return None, _json_error(f"corrupt upload metadata: {exc}", code="bad_request")
+        expires_at = meta.get("expires_at", "")
+        try:
+            exp_dt = datetime.datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+            if exp_dt.tzinfo is None:
+                exp_dt = exp_dt.replace(tzinfo=datetime.timezone.utc)
+            now = datetime.datetime.now(datetime.timezone.utc)
+            if now >= exp_dt:
+                return None, _json_error(f"upload expired: {upload_id}", code="upload_expired")
+        except Exception:
+            return None, _json_error("invalid upload expiry metadata", code="bad_request")
+        return meta, None
+
+    def _execute_repo_parse(
+        self,
+        *,
+        sample_id: str,
+        files: dict[str, str],
+        language: str,
+        overwrite: bool,
+        ingest_mode: str,
+    ) -> None:
+        source_hash = _canonical_tree_hash(files)
+        cpg_out = Path(self.cpg_out_dir) / sample_id
+        file_count = len(files)
+
+        self._log_event(
+            "parse_repo_request",
+            sample_id=sample_id,
+            language=(language or None),
+            overwrite=overwrite,
+            source_hash=source_hash,
+            ingest_mode=ingest_mode,
+            file_count=file_count,
+        )
+
+        hash_lock = _get_hash_lock(source_hash)
+        with hash_lock:
+            if self.cpg_registry is not None:
+                entry = self.cpg_registry.lookup(source_hash)
+                if entry is not None:
+                    archive_path = Path(entry["archive_path"])
+                    if archive_path.exists():
+                        try:
+                            _cpg_copy(archive_path, cpg_out)
+                            now = datetime.datetime.utcnow().isoformat() + "Z"
+                            entry["last_used"] = now
+                            self.cpg_registry.register(source_hash, entry)
+                            self._log_event(
+                                "parse_repo_result",
+                                sample_id=sample_id,
+                                ok=True,
+                                cache_hit=True,
+                                source_hash=source_hash,
+                                ingest_mode=ingest_mode,
+                            )
+                            self._send_json(
+                                HTTPStatus.OK,
+                                {
+                                    "ok": True,
+                                    "sample_id": sample_id,
+                                    "cpg_path": str(cpg_out),
+                                    "language": language or None,
+                                    "cache_hit": True,
+                                    "source_hash": source_hash,
+                                    "parse_mode": "repo",
+                                    "ingest_mode": ingest_mode,
+                                    "file_count": file_count,
+                                },
+                            )
+                            with self.__class__._sid_hash_lock:
+                                self.__class__._sid_to_hash[sample_id] = source_hash
+                            return
+                        except Exception:
+                            _cpg_remove(cpg_out)
+
+        if cpg_out.exists() and not overwrite:
+            with self.__class__._sid_hash_lock:
+                existing_hash = self.__class__._sid_to_hash.get(sample_id)
+            if existing_hash == source_hash:
+                self._log_event(
+                    "parse_repo_result",
+                    sample_id=sample_id,
+                    ok=True,
+                    cache_hit=True,
+                    source_hash=source_hash,
+                    ingest_mode=ingest_mode,
+                )
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "ok": True,
+                        "sample_id": sample_id,
+                        "cpg_path": str(cpg_out),
+                        "language": language or None,
+                        "cache_hit": True,
+                        "source_hash": source_hash,
+                        "parse_mode": "repo",
+                        "ingest_mode": ingest_mode,
+                        "file_count": file_count,
+                    },
+                )
+                with self.__class__._sid_hash_lock:
+                    self.__class__._sid_to_hash[sample_id] = source_hash
+                return
+            self._send_json(
+                HTTPStatus.CONFLICT,
+                _json_error(
+                    f"CPG output already exists at {cpg_out}; pass overwrite=true to replace",
+                    code="cpg_exists",
+                ),
+            )
+            return
+        if cpg_out.exists() and overwrite:
+            _cpg_remove(cpg_out)
+
+        tmp_src_dir = Path(tempfile.mkdtemp(prefix=f"joern-repo-{sample_id}-"))
+        try:
+            self._materialize_tree(files, tmp_src_dir)
+            cmd = [self.parse_bin, str(tmp_src_dir), "--output", str(cpg_out)]
+            if language:
+                cmd.extend(["--language", language])
+            proc = subprocess.run(
+                cmd,
+                text=True,
+                capture_output=True,
+                timeout=self.parse_repo_timeout_sec,
+                check=False,
+            )
+            ok = proc.returncode == 0 and cpg_out.exists()
+            status = HTTPStatus.OK if ok else HTTPStatus.BAD_GATEWAY
+            self._log_event(
+                "parse_repo_result",
+                sample_id=sample_id,
+                ok=ok,
+                return_code=proc.returncode,
+                cache_hit=False,
+                source_hash=source_hash,
+                ingest_mode=ingest_mode,
+            )
+            self._send_json(
+                status,
+                {
+                    "ok": ok,
+                    "sample_id": sample_id,
+                    "cpg_path": str(cpg_out),
+                    "language": language or None,
+                    "return_code": proc.returncode,
+                    "stdout": proc.stdout[-100_000:],
+                    "stderr": proc.stderr[-100_000:],
+                    "cache_hit": False,
+                    "source_hash": source_hash,
+                    "parse_mode": "repo",
+                    "ingest_mode": ingest_mode,
+                    "file_count": file_count,
+                },
+            )
+            if ok:
+                with self.__class__._sid_hash_lock:
+                    self.__class__._sid_to_hash[sample_id] = source_hash
+        except subprocess.TimeoutExpired:
+            self._send_json(
+                HTTPStatus.GATEWAY_TIMEOUT,
+                _json_error(
+                    f"joern-parse timed out after {self.parse_repo_timeout_sec}s",
+                    code="parse_timeout",
+                ),
+            )
+        except Exception as e:
+            self._send_json(HTTPStatus.BAD_GATEWAY, _json_error(str(e), code="parse_failed"))
+        finally:
+            shutil.rmtree(tmp_src_dir, ignore_errors=True)
+
+    def _handle_parse_repo(self) -> None:
+        content_type = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        is_jsonl = content_type == "application/x-ndjson"
+
+        if is_jsonl:
+            query = self._request_query()
+            sample_id_raw = (query.get("sample_id") or [""])[0].strip()
+            language = _normalize_language((query.get("language") or [""])[0].strip())
+            overwrite = _query_bool((query.get("overwrite") or [None])[0], default=False)
+            if not sample_id_raw:
+                self._send_json(HTTPStatus.BAD_REQUEST, _json_error("missing required query param: sample_id"))
+                return
+            sample_id = _safe_sample_id(sample_id_raw)
+            files, err = self._read_jsonl_repo_files()
+            if err is not None or files is None:
+                status = HTTPStatus.REQUEST_ENTITY_TOO_LARGE if err and err.get("code") == "payload_too_large" else HTTPStatus.BAD_REQUEST
+                self._send_json(status, err or _json_error("invalid request"))
+                return
+            self._execute_repo_parse(
+                sample_id=sample_id,
+                files=files,
+                language=language,
+                overwrite=overwrite,
+                ingest_mode="jsonl",
+            )
+            return
+
+        if content_type != "application/json":
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                _json_error(
+                    "Content-Type must be application/x-ndjson (JSONL) or application/json (upload_id/source_root)",
+                    code="bad_request",
+                ),
+            )
+            return
+
+        data, err = self._parse_request_json()
+        if err is not None or data is None:
+            self._send_json(HTTPStatus.BAD_REQUEST, err or _json_error("invalid request"))
+            return
+
+        has_upload = bool(str(data.get("upload_id", "")).strip())
+        has_source_root = bool(str(data.get("source_root", "")).strip())
+        if has_upload and has_source_root:
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                _json_error("upload_id and source_root are mutually exclusive", code="bad_request"),
+            )
+            return
+        if not has_upload and not has_source_root:
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                _json_error("JSON body requires upload_id or source_root", code="bad_request"),
+            )
+            return
+
+        sample_id_raw = str(data.get("sample_id", "")).strip()
+        if not sample_id_raw:
+            self._send_json(HTTPStatus.BAD_REQUEST, _json_error("missing required field: sample_id"))
+            return
+        sample_id = _safe_sample_id(sample_id_raw)
+        language = _normalize_language(str(data.get("language", "")).strip())
+        overwrite = bool(data.get("overwrite", False))
+
+        if has_upload:
+            upload_id = str(data.get("upload_id", "")).strip()
+            meta, err = self._load_upload_meta(upload_id)
+            if err is not None:
+                code = err.get("code", "bad_request")
+                if code == "upload_not_found":
+                    status = HTTPStatus.NOT_FOUND
+                elif code == "upload_expired":
+                    status = HTTPStatus.GONE
+                else:
+                    status = HTTPStatus.BAD_REQUEST
+                self._send_json(status, err)
+                return
+            tree_root = self._upload_tree_path(upload_id)
+            files, err = _collect_tree_files(
+                tree_root,
+                max_files=self.parse_repo_max_files,
+                max_bytes=self.parse_repo_max_bytes,
+            )
+            if err is not None or files is None:
+                status = HTTPStatus.REQUEST_ENTITY_TOO_LARGE if err and err.get("code") == "payload_too_large" else HTTPStatus.BAD_REQUEST
+                self._send_json(status, err or _json_error("invalid request"))
+                return
+            self._execute_repo_parse(
+                sample_id=sample_id,
+                files=files,
+                language=language,
+                overwrite=overwrite,
+                ingest_mode="upload",
+            )
+            return
+
+        source_root = Path(str(data.get("source_root", "")).strip())
+        allowed = _parse_allowed_roots()
+        if not source_root.exists():
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                _json_error(f"source_root does not exist: {source_root}", code="invalid_source_root"),
+            )
+            return
+        if not _is_under_allowed_root(source_root, allowed):
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                _json_error(
+                    f"source_root must be under allowed roots: {[str(r) for r in allowed]}",
+                    code="invalid_source_root",
+                ),
+            )
+            return
+        files, err = _collect_tree_files(
+            source_root,
+            max_files=self.parse_repo_max_files,
+            max_bytes=self.parse_repo_max_bytes,
+        )
+        if err is not None or files is None:
+            status = HTTPStatus.REQUEST_ENTITY_TOO_LARGE if err and err.get("code") == "payload_too_large" else HTTPStatus.BAD_REQUEST
+            self._send_json(status, err or _json_error("invalid request"))
+            return
+        self._execute_repo_parse(
+            sample_id=sample_id,
+            files=files,
+            language=language,
+            overwrite=overwrite,
+            ingest_mode="source_root",
+        )
+
+    def _handle_parse_repo_upload(self) -> None:
+        content_type = self.headers.get("Content-Type") or ""
+        body = self._read_body()
+        if len(body) > self.parse_repo_max_archive_bytes:
+            self._send_json(
+                HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                _json_error(
+                    f"archive exceeds max size ({self.parse_repo_max_archive_bytes} bytes)",
+                    code="payload_too_large",
+                ),
+            )
+            return
+        archive_bytes, err = _parse_multipart_archive(body, content_type)
+        if err is not None or archive_bytes is None:
+            self._send_json(HTTPStatus.BAD_REQUEST, err or _json_error("invalid request"))
+            return
+        if not archive_bytes:
+            self._send_json(HTTPStatus.BAD_REQUEST, _json_error("empty archive", code="bad_request"))
+            return
+
+        upload_id = str(uuid.uuid4())
+        upload_dir = Path(self.repo_uploads_dir) / upload_id
+        tree_dir = upload_dir / "tree"
+        tree_dir.mkdir(parents=True, exist_ok=True)
+        extract_err = _extract_archive(archive_bytes, tree_dir)
+        if extract_err is not None:
+            shutil.rmtree(upload_dir, ignore_errors=True)
+            self._send_json(HTTPStatus.BAD_REQUEST, extract_err)
+            return
+
+        expires_at = (
+            datetime.datetime.now(datetime.timezone.utc)
+            + datetime.timedelta(hours=self.parse_repo_upload_ttl_hours)
+        ).isoformat().replace("+00:00", "Z")
+        meta = {
+            "upload_id": upload_id,
+            "expires_at": expires_at,
+            "bytes_stored": len(archive_bytes),
+            "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+        self._upload_meta_path(upload_id).write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        self._log_event("parse_repo_upload", upload_id=upload_id, bytes_stored=len(archive_bytes))
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "upload_id": upload_id,
+                "expires_at": expires_at,
+                "bytes_stored": len(archive_bytes),
+            },
+        )
 
     def _handle_cleanup(self) -> None:
         data, err = self._parse_request_json()
@@ -1381,11 +1974,21 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
             return
 
     def do_POST(self) -> None:  # noqa: N802 (http.server naming)
-        if self.path == "/parse":
+        req_path = self._request_path()
+
+        if req_path == "/parse/repo":
+            self._handle_parse_repo()
+            return
+
+        if req_path == "/parse/repo/upload":
+            self._handle_parse_repo_upload()
+            return
+
+        if req_path == "/parse":
             self._handle_parse()
             return
 
-        if self.path == "/cleanup":
+        if req_path == "/cleanup":
             self._handle_cleanup()
             return
 
@@ -1552,6 +2155,12 @@ def main() -> None:
     cpg_archive_max_count = _env_int("CPG_ARCHIVE_MAX_COUNT", 100)
     cpg_archive_max_gb = _env_int("CPG_ARCHIVE_MAX_GB", 50)
     parse_timeout_sec = _env_int("JOERN_PARSE_TIMEOUT_SEC", 900)
+    parse_repo_timeout_sec = _env_int("JOERN_PARSE_REPO_TIMEOUT_SEC", 1800)
+    parse_repo_max_files = _env_int("PARSE_REPO_MAX_FILES", 2000)
+    parse_repo_max_bytes = _env_int("PARSE_REPO_MAX_BYTES", 50_000_000)
+    parse_repo_max_archive_mb = _env_int("PARSE_REPO_MAX_ARCHIVE_MB", 500)
+    parse_repo_upload_ttl_hours = _env_int("PARSE_REPO_UPLOAD_TTL_HOURS", 24)
+    repo_uploads_dir = _env_str("PARSE_REPO_UPLOADS_DIR", "/workspace/repo-uploads")
     # Default aligns with training/agent --joern-timeout (600s); router HAProxy allows up to 3600s.
     query_timeout_sec = _env_int("JOERN_QUERY_TIMEOUT_SEC", 600)
     # Joern HTTP server endpoint inside the container.
@@ -1577,7 +2186,14 @@ def main() -> None:
     JoernProxyHandler.cpg_out_dir = cpg_out_dir
     JoernProxyHandler.cpg_archive_dir = cpg_archive_dir
     JoernProxyHandler.parse_timeout_sec = parse_timeout_sec
+    JoernProxyHandler.parse_repo_timeout_sec = parse_repo_timeout_sec
+    JoernProxyHandler.parse_repo_max_files = parse_repo_max_files
+    JoernProxyHandler.parse_repo_max_bytes = parse_repo_max_bytes
+    JoernProxyHandler.parse_repo_max_archive_bytes = parse_repo_max_archive_mb * 1024 * 1024
+    JoernProxyHandler.parse_repo_upload_ttl_hours = parse_repo_upload_ttl_hours
+    JoernProxyHandler.repo_uploads_dir = repo_uploads_dir
     JoernProxyHandler.query_timeout_sec = query_timeout_sec
+    Path(repo_uploads_dir).mkdir(parents=True, exist_ok=True)
     httpd = ThreadingHTTPServer((proxy_host, proxy_port), JoernProxyHandler)
     httpd.serve_forever()
 
