@@ -1,5 +1,7 @@
 # Joern deploy profiles
 
+Production deploy is **HTTP-only on port 8080** (no MCP / :9000). The unified Docker image starts Joern + `joern_server/proxy.py` only.
+
 Run all commands from the **repository root** (compose paths like `../docker/Dockerfile` are relative to the repo root).
 
 ## Which profile?

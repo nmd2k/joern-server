@@ -173,10 +173,10 @@ class TestPlaygroundRoute:
 
 
 class TestPlaygroundToolDefinitions:
-    """S5-005: MCP tool → CPGQL translation correctness."""
+    """S5-005 / S9-002: Joern tool metadata and CPGQL builders (no MCP bridge)."""
 
     def test_all_25_tools_defined(self):
-        """All MCP tools (24 + parse_source) are in tool-definitions.js."""
+        """All Joern tools (24 + parse_source) are in tool-definitions.js."""
         playground_dir = os.path.normpath(
             os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
@@ -244,8 +244,33 @@ class TestPlaygroundToolDefinitions:
         # parse_source must have _custom flag (calls /api/parse directly)
         assert "_custom: true" in content
 
-        # escapeCPGQL helper must still exist (used by raw query panel)
+        # escapeCPGQL and buildQuery helpers (HTTP /query-sync path)
         assert "escapeCPGQL" in content
+        assert "function buildQuery" in content
+        assert "window.buildQuery" in content
+
+    def test_tools_panel_uses_query_sync_not_mcp(self):
+        """tools-panel.js must call /api/query-sync, not /mcp/tools."""
+        playground_dir = os.path.normpath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
+        )
+        path = os.path.join(playground_dir, "components", "tools-panel.js")
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "/api/query-sync" in content
+        assert "/mcp/tools" not in content
+        assert "MCP Tool Runner" not in content
+
+    def test_playground_server_has_no_mcp_bridge(self):
+        """playground-server/server.js must not expose MCP routes."""
+        server_path = os.path.normpath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "server.js")
+        )
+        with open(server_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "/mcp/tools" not in content
+        assert "MCP_SERVER_URL" not in content
+        assert "mcp_connected" not in content
 
     def test_escape_cpgql_helper_exists(self):
         """escapeCPGQL function should exist in tool-definitions.js."""
@@ -313,6 +338,30 @@ class TestPlaygroundAppStructure:
             content = f.read()
 
         assert "JOERN_TOOLS" in content, "tools-panel.js must reference window.JOERN_TOOLS"
+
+
+class TestDockerDeployNoMcp:
+    """S9-001: Unified image entrypoint must not start MCP."""
+
+    def test_unified_entrypoint_does_not_start_mcp(self):
+        entrypoint = os.path.normpath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "docker", "unified-entrypoint.sh")
+        )
+        with open(entrypoint, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "start_mcp" not in content
+        assert "server.py" not in content
+        assert "MCP_PORT" not in content
+
+    def test_dockerfile_exposes_http_only(self):
+        dockerfile = os.path.normpath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "docker", "Dockerfile")
+        )
+        with open(dockerfile, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "EXPOSE 8080" in content
+        assert "EXPOSE 9000" not in content
+        assert "fastmcp" not in content.lower()
 
 
 class TestPlaygroundPathTraversal:

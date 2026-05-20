@@ -22,7 +22,6 @@ COMPOSE_PREFIX="${COMPOSE_PREFIX:-deploy}"
 # Add more paths here as needed (directories are copied recursively).
 SYNC_PATHS=(
   "joern_server"
-  "mcp-joern/server.py"
   "mcp-joern/server_tools.py"
   "mcp-joern/server_tools.sc"
   "mcp-joern/common_tools.py"
@@ -53,16 +52,6 @@ patch_container() {
     sleep 0.5
   fi
   docker exec -d "$container" sh -c "JOERN_INTERNAL_HOST=127.0.0.1 python3 /app/joern_server/proxy.py"
-
-  # Restart the MCP server (server.py) so it picks up mcp-joern/ changes.
-  MCP_PID=$(docker exec "$container" pgrep -f "server.py" 2>/dev/null || true)
-  if [ -n "$MCP_PID" ]; then
-    docker exec "$container" kill "$MCP_PID" 2>/dev/null || true
-    sleep 0.5
-  fi
-  PROXY_PORT_VAL=$(docker exec "$container" printenv PROXY_PORT 2>/dev/null || echo "8080")
-  docker exec -d "$container" sh -c \
-    "cd /app/mcp-joern && MCP_TRANSPORT=sse MCP_HOST=0.0.0.0 HOST=127.0.0.1 PORT=$PROXY_PORT_VAL python3 server.py"
 
   echo "  [done]  $container"
 }

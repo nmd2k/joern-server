@@ -45,14 +45,12 @@ COPY --chown=joern:joern joern_server /app/joern_server
 RUN mkdir -p /app/samples/c
 # COPY --chown=joern:joern samples/c/hello.cpg /app/samples/c/hello.cpg
 
-RUN python3 -m pip install --no-cache-dir -r /app/mcp-joern/requirements.txt \
-  && python3 -m pip install --no-cache-dir "httpx>=0.27.0"
+RUN python3 -m pip install --no-cache-dir "httpx>=0.27.0"
 
 USER joern
 WORKDIR /app
 
 EXPOSE 8080
-EXPOSE 9000
 
 HEALTHCHECK --interval=30s --timeout=15s --start-period=120s --retries=5 \
   CMD /usr/local/bin/joern-healthcheck.sh

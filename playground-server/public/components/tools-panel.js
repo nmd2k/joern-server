@@ -7,7 +7,7 @@
   tmpl.id = 'tools-panel-template';
   tmpl.innerHTML = '<div class="panel">' +
     '<div class="panel-header" @click="panelOpen=!panelOpen">' +
-      '<h2><span class="chevron" :class="{open:panelOpen}">&#9654;</span> MCP Tool Runner</h2>' +
+      '<h2><span class="chevron" :class="{open:panelOpen}">&#9654;</span> CPGQL Tool Runner</h2>' +
     '</div>' +
     '<div class="panel-body" :class="{show:panelOpen}">' +
       '<div class="form-group">' +
@@ -162,18 +162,34 @@
               self.toolResult = parseData;
             }
           } else {
-            var resp = await fetch('/mcp/tools/' + self.selectedTool, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(self.toolParams)
-            });
-            var data = await resp.json();
-            if (resp.ok) {
-              self.toolResult = data;
-            } else {
-              self.toolError = JSON.stringify(data, null, 2);
-              self.toolResult = data;
+            var buildQuery = window.buildQuery;
+            if (!buildQuery) {
+              self.toolError = 'buildQuery helper not loaded (tool-definitions.js)';
+              return;
             }
+            var queries;
+            try {
+              queries = buildQuery(self.selectedTool, self.toolParams);
+            } catch (err) {
+              self.toolError = err.message;
+              return;
+            }
+            if (!Array.isArray(queries)) queries = [queries];
+            var lastData = null;
+            for (var qi = 0; qi < queries.length; qi++) {
+              var qResp = await fetch('/api/query-sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query: queries[qi] })
+              });
+              lastData = await qResp.json();
+              if (!qResp.ok) {
+                self.toolError = JSON.stringify(lastData, null, 2);
+                self.toolResult = lastData;
+                return;
+              }
+            }
+            self.toolResult = lastData;
           }
         } catch (e) {
           self.toolError = 'Network error: ' + e.message;
