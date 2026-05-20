@@ -10,25 +10,25 @@ This platform allows LLM agents and remote clients to perform automated code ana
 
 <div class="grid cards" markdown>
 
--   **[:material-image-filter-hdr: Architecture](ARCHITECTURE.md)**
+-   **[:octicons-workflow-24: Architecture](ARCHITECTURE.md)**
 
     ---
 
     Understand the HTTP-first request flow, session isolation, and on-disk storage layouts.
 
--   **[:material-book-open-page-variant: Client Guide](CLIENT_GUIDE.md)**
+-   **[:octicons-terminal-24: Query Guide](query_guide.md)**
 
     ---
 
     Explore code examples for parsing single snippets, NDJSON repositories, and querying sessions.
 
--   **[:material-server-network: Deployment](deploy.md)**
+-   **[:octicons-server-24: Deployment](deploy.md)**
 
     ---
 
     Guides for scaling up Joern Server behind HAProxy in production environments.
 
--   **[:material-test-tube: Testing Guide](testing.md)**
+-   **[:octicons-beaker-24: Testing Guide](testing.md)**
 
     ---
 
