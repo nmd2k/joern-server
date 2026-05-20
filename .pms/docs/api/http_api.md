@@ -1,31 +1,57 @@
-# HTTP Proxy API Reference
+# Joern HTTP Proxy API
 
-The joern-server HTTP proxy sits between clients and the internal Joern REPL server. It adds authentication, session affinity, query caching, and source-code parsing on top of Joern's native `/query-sync` interface.
+The `joern_server` proxy exposes a stable HTTP API in front of Joern's internal `/query-sync` REPL. Clients should call the **proxy** (`:8080`), not Joern directly.
 
-**Default base URL:** `http://localhost:8080`
-
----
-
-## Authentication
-
-All endpoints support HTTP Basic Auth. (default to no auth for development)
-
-```
-Authorization: Basic base64(<username>:<password>)
-```
-
-Credentials are set via env vars `JOERN_SERVER_AUTH_USERNAME` / `JOERN_SERVER_AUTH_PASSWORD`. If both are unset, auth is disabled (development only). Credentials are forwarded upstream to the internal Joern REPL.
+**Base URL:** `http://<host>:8080` (or HAProxy VIP)  
+**Content-Type:** `application/json`  
+**Auth:** HTTP Basic (when `JOERN_SERVER_AUTH_*` is configured)
 
 ---
 
-## Request Headers
+## Session semantics (`X-Session-Id`)
+
+Joern's REPL keeps **one active CPG per process**. The proxy enforces **session-scoped** behavior so concurrent clients do not leak or trample each other's graphs.
 
 | Header | Required | Description |
 |--------|----------|-------------|
-| `Authorization` | No | HTTP Basic Auth credentials |
-| `Content-Type` | Yes (POST) | Must be `application/json` |
-| `X-Session-Id` | No | Sticky-routing token. All requests sharing this value are routed to the same Joern backend replica. Auto-generated if absent. |
-| `X-Request-Id` | No | Arbitrary trace ID, logged but not used for routing. |
+| `X-Session-Id` | Recommended | Opaque string identifying a client conversation. Defaults to `"default"` if omitted. |
+| `X-Request-Id` | Optional | Correlation ID for logs. |
+
+### Rules
+
+1. **`importCpg("…")`** — On success, the proxy records that CPG path for this `X-Session-Id`. Subsequent queries for the same session re-activate that CPG before execution.
+2. **Other queries** — Before forwarding, the proxy ensures the session's recorded CPG is active (`importCpg` if needed). If the session has **no** imported CPG, the proxy issues a best-effort `close` to clear a prior session's active graph and avoid cross-session leakage.
+3. **Sticky routing** — In scaled deployments, send the **same** `X-Session-Id` on every request so HAProxy pins you to one replica (see `deploy/README.md`).
+4. **One REPL, many sessions** — Isolation is **logical** (proxy-managed activation), not separate OS processes per session. Throughput is serialized per replica via an internal semaphore.
+
+### Example flow
+
+```bash
+SESSION=my-analysis-1
+
+# Parse (no session required, but recommended for logging)
+curl -s -X POST http://localhost:8080/parse \
+  -H 'Content-Type: application/json' \
+  -d '{"sample_id":"demo","source_code":"int main(){return 0;}","language":"c"}'
+
+# Load CPG for this session
+curl -s -X POST http://localhost:8080/query-sync \
+  -H "Content-Type: application/json" \
+  -H "X-Session-Id: $SESSION" \
+  -d '{"query":"importCpg(\"/workspace/cpg-out/demo\")"}'
+
+# Query — only this session's CPG is active
+curl -s -X POST http://localhost:8080/query-sync \
+  -H "Content-Type: application/json" \
+  -H "X-Session-Id: $SESSION" \
+  -d '{"query":"cpg.method.name.l"}'
+```
+
+### Error codes (session)
+
+| HTTP | `code` | Meaning |
+|------|--------|---------|
+| 422 | `session_cpg_activation_failed` | Proxy could not re-activate the session's CPG |
 
 ---
 
@@ -33,271 +59,79 @@ Credentials are set via env vars `JOERN_SERVER_AUTH_USERNAME` / `JOERN_SERVER_AU
 
 ### `GET /health`
 
-Liveness check. Returns immediately without touching the upstream Joern process.
+Liveness check.
 
-**Response `200`**
-```json
-{"ok": true}
-```
+**Response:** `{"ok": true}`
 
 ---
 
 ### `GET /version`
 
-Returns the running Joern version string by evaluating `joern.versionStr` on the REPL.
+Runs Joern `version` via upstream query.
 
-**Response `200`**
-```json
-{"stdout": "1.2.17"}
-```
+**Response:** `{"stdout": "<version string>"}`
 
 ---
 
-### `POST /query-sync`
+### `POST /parse` (file / snippet mode)
 
-Execute a CPGQL (Joern query language) expression and return its output.
+Parse **inline source** into a CPG. One request = one source file written to a temp directory → `joern-parse` → output at `/workspace/cpg-out/<sample_id>`.
 
-**Request body**
-```json
-{"query": "cpg.method.name.l"}
-```
+**Request body:**
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `query` | string | Yes | Any valid CPGQL expression |
+| `sample_id` | string | yes | Logical name; sanitized to `[a-zA-Z0-9._-]` |
+| `source_code` | string | yes | Full file contents |
+| `language` | string | no | Joern frontend (`c`, `pythonsrc`, `jssrc`, …); aliases normalized |
+| `filename` | string | no | Temp filename hint (default `snippet.<ext>`) |
+| `overwrite` | bool | no | Replace existing output (default `false`) |
 
-**Response `200`**
-```json
-{
-  "success": true,
-  "stdout": "res0: List[String] = List(\"main\", \"helper\")",
-  "stderr": "",
-  "latency_ms": 145
-}
-```
+**Response (success):** `ok`, `sample_id`, `cpg_path`, `language`, `cache_hit`, `source_hash`  
+**Caching:** SHA-256 of `source_code`; archive registry may return `cache_hit: true` without re-parsing.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `success` | bool | `true` if the REPL produced no error |
-| `stdout` | string | Raw REPL standard output |
-| `stderr` | string | Raw REPL standard error |
-| `latency_ms` | int | End-to-end proxy latency |
-
-**Caching behaviour**
-
-Responses are LRU-cached (default: 1000 entries, 300 s TTL). The cache key is `{session_id}:{md5(query)}`. The following query patterns bypass the cache:
-
-- `load_cpg(...)` / `importCpg(...)` — mutate server state
-- `cleanup(...)` — mutates server state
-- Empty or syntactically invalid queries
-- `version` / `help` introspection queries
-
-**Error responses**
-
-| Status | Meaning |
-|--------|---------|
-| 400 | Malformed JSON or missing `query` field |
-| 401 | Invalid or missing credentials |
-| 502 | Upstream Joern returned an error |
-| 504 | Query exceeded `JOERN_QUERY_TIMEOUT_SEC` |
-
----
-
-### `POST /parse`
-
-Parse source code into a Code Property Graph (CPG) and persist it on disk.
-
-**Request body**
-```json
-{
-  "sample_id": "my-sample",
-  "source_code": "int main() { return 0; }",
-  "language": "C",
-  "filename": "main.c",
-  "overwrite": false
-}
-```
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `sample_id` | string | Yes | — | Output directory name under `CPG_OUT_DIR` |
-| `source_code` | string | Yes | — | Raw source text to parse |
-| `language` | string | No | auto-detect | Target language (see table below) |
-| `filename` | string | No | `snippet.txt` | Filename written to the temp dir before parsing |
-| `overwrite` | bool | No | `false` | Replace an existing CPG with the same `sample_id` |
-
-**Supported `language` values**
-
-Aliases are normalised before being passed to `joern-parse`.
-
-| Accepted alias | Joern canonical |
-|----------------|----------------|
-| `c`, `cpp`, `c++`, `cc`, `cxx` | `C` |
-| `java` | `JAVASRC` |
-| `py`, `python` | `PYTHONSRC` |
-| `js`, `ts`, `javascript`, `typescript` | `JSSRC` |
-| `cs`, `csharp` | `CSHARPSRC` |
-| `go` | `GOLANG` |
-| `rb`, `ruby` | `RUBYSRC` |
-
-**Response `200`**
-```json
-{
-  "ok": true,
-  "sample_id": "my-project",
-  "cpg_path": "/workspace/cpg-out/my-project",
-  "language": "C",
-  "return_code": 0,
-  "stdout": "...",
-  "stderr": "",
-  "cache_hit": false,
-  "source_hash": "a3f1c2..."
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `ok` | bool | `true` on success |
-| `sample_id` | string | Echo of the request `sample_id` |
-| `cpg_path` | string | Absolute path to the CPG output directory |
-| `language` | string | Resolved language used for parsing |
-| `return_code` | int | Exit code from `joern-parse` (0 = success); `null` on cache hit |
-| `stdout` | string | `joern-parse` stdout; empty string on cache hit |
-| `stderr` | string | `joern-parse` stderr; empty string on cache hit |
-| `cache_hit` | bool | `true` if the CPG was loaded from the archive (joern-parse was skipped) |
-| `source_hash` | string | SHA-256 hex digest of `source_code`, used as the archive cache key |
-
-**Error responses**
-
-| Status | Meaning |
-|--------|---------|
-| 400 | Missing required fields |
-| 409 | CPG for `sample_id` already exists; set `overwrite: true` to replace |
-| 504 | Parsing exceeded `JOERN_PARSE_TIMEOUT_SEC` |
+**Limitation:** This is **not** repo-level parsing. Cross-file edges exist only when the single snippet includes them. See Sprint 9 design for `POST /parse/repo`.
 
 ---
 
 ### `POST /cleanup`
 
-Delete (or archive) a previously parsed CPG from disk.
+Remove or archive a CPG by `sample_id`.
 
-**Request body**
-```json
-{"sample_id": "my-project", "archive": true}
-```
+**Request body:** `sample_id`, optional `archive` (default `false`)
 
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `sample_id` | string | Yes | — | ID of the CPG to remove |
-| `archive` | bool | No | `false` | If `true`, move CPG to the archive instead of deleting it permanently |
+---
 
-**Response `200`**
-```json
-{
-  "ok": true,
-  "sample_id": "my-project",
-  "cpg_path": "/workspace/cpg-out/my-project",
-  "deleted": false,
-  "archived": true
-}
-```
+### `POST /query-sync`
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `ok` | bool | Always `true` on a 200 response |
-| `sample_id` | string | Echo of the request `sample_id` |
-| `cpg_path` | string | Path that was removed or archived |
-| `deleted` | bool | `true` if the CPG was permanently deleted; `false` if archived or not found |
-| `archived` | bool | `true` if the CPG was moved to the archive; `false` otherwise |
+Forward CPGQL to Joern. Body: `{"query": "<CPGQL>"}`.
 
-`deleted` and `archived` are both `false` when no CPG was found for the given `sample_id` (idempotent).
+**Response:** Joern JSON (`stdout`, `stderr`, `success`, …). ANSI escapes stripped from `stdout`. HTTP 422 when Joern returns `success: false`.
 
-When `archive=true` the CPG is moved to `CPG_ARCHIVE_DIR/<source_hash>/` and recorded in the registry. Disk-LRU eviction runs immediately after each archive operation.
+**Session:** See [Session semantics](#session-semantics-x-session-id).
+
+---
+
+### `POST /graph/cfg` | `/graph/dfg` | `/graph/ddg` | `/graph/pdg` | `/graph/ast`
+
+Return graph JSON for a method. Body: `{"method_full_name": "<fqn>"}`.
+
+**Response:** `{ "nodes", "edges", "metadata", "method_full_name" }`  
+**Requires:** CPG already loaded for the session (via `importCpg`).
 
 ---
 
 ### `GET /cache-metrics`
 
-Return query-cache statistics.
-
-**Request body** — empty `{}` or omit body.
-
-**Response `200`** — cache counters dict (hits, misses, size, evictions).
-
-> **Note — CPG archive stats:** `/cache-metrics` covers the in-memory CPGQL query cache (Sprint 1). CPG archive statistics (total archived entries, eviction count, disk usage) are recorded in the registry file at `<parent of CPG_OUT_DIR>/cpg-registry.json`, not in this endpoint. A future sprint may expose archive stats here via an `"archive"` sub-key.
+Query LRU cache stats (when `QUERY_CACHE_MAX_SIZE` > 0).
 
 ---
 
-### CPG Archive — Environment Variables
+## Planned (Sprint 9+)
 
-The CPG archive cache is configured via the following environment variables.
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /parse/repo` | Parse a directory tree (mounted path or uploaded archive) into one CPG |
+| Deprecation | MCP layer (`mcp-joern/`) removed; HTTP-only clients |
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CPG_ARCHIVE_DIR` | `/workspace/cpg-archive` | Root directory where archived CPGs are stored (one sub-directory per `source_hash`) |
-| `CPG_ARCHIVE_MAX_COUNT` | `100` | Maximum number of archived CPGs retained; oldest by `last_used` are evicted first (LRU) |
-| `CPG_ARCHIVE_MAX_GB` | `50` | Maximum total disk space (GB) consumed by the archive; LRU eviction runs until within limit |
-
-The archive registry is stored at `<parent of CPG_OUT_DIR>/cpg-registry.json` (i.e. `/workspace/cpg-registry.json` by default). It maps `source_hash → {archive_path, sample_id, archived_at, last_used, size_bytes}` and is protected by a threading lock to prevent corruption under concurrent access.
-
----
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PROXY_HOST` | `0.0.0.0` | Proxy bind address |
-| `PROXY_PORT` | `8080` | Proxy listen port |
-| `JOERN_INTERNAL_HOST` | `127.0.0.1` | Internal Joern REPL host |
-| `JOERN_INTERNAL_PORT` | `18080` | Internal Joern REPL port |
-| `JOERN_PARSE_BIN` | `/opt/joern/joern-parse` | Path to `joern-parse` binary |
-| `CPG_OUT_DIR` | `/workspace/cpg-out` | Root dir for parsed CPGs |
-| `JOERN_PARSE_TIMEOUT_SEC` | `900` | Max seconds for a `/parse` request |
-| `JOERN_QUERY_TIMEOUT_SEC` | `600` | Max seconds for a `/query-sync` request |
-| `QUERY_CACHE_MAX_SIZE` | `1000` | LRU cache capacity (entries) |
-| `QUERY_CACHE_TTL_SEC` | `300` | LRU cache entry TTL (seconds) |
-| `JOERN_SERVER_AUTH_USERNAME` | *(unset)* | Basic auth username |
-| `JOERN_SERVER_AUTH_PASSWORD` | *(unset)* | Basic auth password |
-| `CPG_ARCHIVE_DIR` | `/workspace/cpg-archive` | Directory for archived CPGs (hash-keyed sub-dirs) |
-| `CPG_ARCHIVE_MAX_COUNT` | `100` | Max number of archived CPGs before LRU eviction |
-| `CPG_ARCHIVE_MAX_GB` | `50` | Max total archive disk size in GB before LRU eviction |
-
----
-
-## Python Client
-
-`joern_server.client.JoernHTTPQueryExecutor` wraps the HTTP API.
-
-```python
-from joern_server.client import JoernHTTPQueryExecutor
-
-with JoernHTTPQueryExecutor(
-    "http://127.0.0.1:8080",
-    auth=("joern", "password"),
-    timeout=600.0,
-    retries=2,
-    session_id="my-session",  # sticky routing
-) as ex:
-    # Execute a CPGQL query
-    result = ex.execute("cpg.method.name.l")
-    # {"success": True, "stdout": "...", "stderr": "", "latency_ms": 123}
-
-    # Parse source code
-    parse = ex.parse_source(
-        sample_id="my-sample",
-        source_code="int main(){}",
-        language="C",
-        filename="main.c",
-        overwrite=False,
-    )
-    # {"ok": True, "sample_id": "my-sample", "cpg_path": "...", ...}
-```
-
-Multiple base URLs are accepted; the client round-robins across them:
-
-```python
-ex = JoernHTTPQueryExecutor(
-    ["http://host1:8080", "http://host2:8080"],
-    auth=("joern", "password"),
-)
-```
+See `.pms/backlog/sprint9.md` and `.pms/docs/sdd/sdd_v2_http_platform.md`.

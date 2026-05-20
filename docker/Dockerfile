@@ -37,7 +37,7 @@ COPY --chmod=755 docker/unified-entrypoint.sh /usr/local/bin/neuralatlas-unified
 
 COPY --chown=joern:joern mcp-joern /app/mcp-joern
 COPY --chown=joern:joern joern_server /app/joern_server
-COPY --chown=joern:joern playground /app/playground
+# COPY --chown=joern:joern playground /app/playground
 
 # Include committed sample CPG used by integration tests and smoke checks.
 # The real Joern server runs inside the container, so the file must be present

@@ -48,6 +48,7 @@ def _safe_sample_id(raw: str) -> str:
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+_IMPORT_CPG_RE = re.compile(r"""^\s*importCpg\(\s*["']([^"']+)["']\s*\)\s*$""")
 
 
 def _strip_ansi(text: str) -> str:
@@ -152,6 +153,13 @@ def _dot_to_graph(dot_text: str) -> dict:
                 "label": label_m.group(1) if label_m else "",
                 "shape": shape_m.group(1) if shape_m else "",
             })
+
+    declared_ids = {n["id"] for n in nodes}
+    for e in edges:
+        for nid in (e["source"], e["target"]):
+            if nid not in declared_ids:
+                nodes.append({"id": nid, "label": "", "shape": ""})
+                declared_ids.add(nid)
 
     return {"nodes": nodes, "edges": edges}
 
@@ -389,6 +397,15 @@ def _parse_ast_tuples(stdout: str) -> tuple[list[dict], list[dict], dict[str, di
                 })
         except Exception:
             continue
+
+    node_ids = {n["id"] for n in nodes}
+    for e in edges:
+        for nid in (e["source"], e["target"]):
+            if nid not in node_ids:
+                nodes.append({"id": nid, "label": "", "shape": ""})
+                metadata[nid] = {}
+                node_ids.add(nid)
+
     return nodes, edges, metadata
 
 
@@ -626,6 +643,10 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
     # Maps sample_id → source_hash for in-flight/recent parses (thread-safe via _sid_hash_lock)
     _sid_to_hash: dict = {}
     _sid_hash_lock: threading.Lock = threading.Lock()
+    # Session-scoped CPG import state (guarded by repl_semaphore critical section).
+    _session_cpg_path: dict[str, str] = {}
+    _active_session_id: Optional[str] = None
+    _active_cpg_path: Optional[str] = None
 
     def _log_event(self, event: str, **fields: Any) -> None:
         payload: dict[str, Any] = {
@@ -676,6 +697,59 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
         if len(q) <= limit:
             return q
         return q[:limit] + "...(truncated)"
+
+    @staticmethod
+    def _extract_import_cpg_path(query: str) -> Optional[str]:
+        m = _IMPORT_CPG_RE.match((query or "").strip())
+        if not m:
+            return None
+        return m.group(1).strip() or None
+
+    def _post_query_sync(self, *, query: str, timeout_sec: int) -> httpx.Response:
+        return httpx.post(
+            self.internal_url,
+            json={"query": query},
+            headers=_upstream_headers(self),
+            timeout=timeout_sec,
+        )
+
+    def _activate_session_cpg_if_needed(self, session_id: str) -> tuple[bool, Optional[str]]:
+        desired_cpg = self.__class__._session_cpg_path.get(session_id)
+        active_cpg = self.__class__._active_cpg_path
+        active_sid = self.__class__._active_session_id
+
+        if desired_cpg:
+            if active_cpg != desired_cpg:
+                resp = self._post_query_sync(query=f'importCpg("{desired_cpg}")', timeout_sec=self.query_timeout_sec)
+                body = resp.json()
+                success = body.get("success", True)
+                if isinstance(success, str):
+                    success = success.strip().lower() in ("true", "1", "yes")
+                if resp.status_code != 200 or not success:
+                    self._log_event(
+                        "session_cpg_activate_failed",
+                        session_id=session_id,
+                        desired_cpg=desired_cpg,
+                        status_code=resp.status_code,
+                    )
+                    self.__class__._session_cpg_path.pop(session_id, None)
+                    self.__class__._active_session_id = None
+                    self.__class__._active_cpg_path = None
+                    return False, f"failed to activate session CPG for session {session_id}"
+                self.__class__._active_cpg_path = desired_cpg
+            self.__class__._active_session_id = session_id
+            return True, None
+
+        # No imported CPG for this session; clear prior active CPG to prevent leakage.
+        if active_cpg is not None and active_sid != session_id:
+            try:
+                self._post_query_sync(query="close", timeout_sec=self.query_timeout_sec)
+            except Exception:
+                # Best-effort: even if close fails, avoid reusing stale active state.
+                pass
+            self.__class__._active_cpg_path = None
+        self.__class__._active_session_id = session_id
+        return True, None
 
     def _read_body(self) -> bytes:
         length = self.headers.get("Content-Length")
@@ -1379,6 +1453,14 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
                     return
 
             with self.repl_semaphore:
+                if query_class != "importCpg":
+                    ok, activate_err = self._activate_session_cpg_if_needed(session_id)
+                    if not ok:
+                        self._send_json(
+                            HTTPStatus.UNPROCESSABLE_ENTITY,
+                            _json_error(activate_err or "session cpg activation failed", code="session_cpg_activation_failed"),
+                        )
+                        return
                 resp = httpx.post(
                     self.internal_url,
                     content=body,
@@ -1413,6 +1495,13 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
             if self.query_cache and self._should_cache(query_class) and out_status == 200:
                 query_hash = self._query_hash(query_str)
                 self.query_cache.put(session_id, query_hash, resp_json)
+
+            if query_class == "importCpg" and out_status == 200:
+                imported_path = self._extract_import_cpg_path(query_str)
+                if imported_path:
+                    self.__class__._session_cpg_path[session_id] = imported_path
+                    self.__class__._active_session_id = session_id
+                    self.__class__._active_cpg_path = imported_path
 
             self._log_event(
                 "query_sync",

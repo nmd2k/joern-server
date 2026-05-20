@@ -1,7 +1,7 @@
 # Product Backlog
 
 **Product:** Joern Server - Scalable CPG Analysis Platform
-**Last updated:** 2026-04-29
+**Last updated:** 2026-05-07
 **Target:** Research/Academic deployment (small codebases: 10-200 LOC)
 
 > The product backlog is the single source of truth for all planned work.
@@ -61,6 +61,8 @@
 | PB-045 | All Joern graph types: PDG + AST endpoints                                   | Feature | High     | Done     | 7 | `/graph/pdg` and `/graph/ast` endpoints added with DOT + Scala tuple parsing. See S7-001, S7-002. |
 | PB-046 | Graph node metadata: code, line, params, identifiers                         | Feature | High     | Done     | 7 | All `/graph/*` enriched with per-node metadata map; hover tooltip + click detail panel. See S7-003, S7-006, S7-007. |
 | PB-047 | Playground file/module organization refactor                                 | Chore   | Medium   | Done     | 7 | `app.js` (350→27L) split into 3 Vue components; `index.html` (176→18L) minimal scaffold. See S7-008, S7-009. |
+| PB-048 | Enforce session-level CPG isolation for `/query-sync` + `importCpg`         | Bug     | High     | Done     | 8 | Session-scoped `importCpg` tracking + activation gate; regression tests; `http_api.md` session contract. |
+| PB-049 | HTTP-first platform: remove MCP, repo parse, docs, deploy cleanup           | Epic    | High     | Planned  | 9 | See sprint9.md: `/parse/repo`, MCP removal, ARCHITECTURE/CLIENT_GUIDE, benchmark file vs repo, consolidate deploy compose. |
 
 
 ---
@@ -99,6 +101,7 @@
 | 2026-04-29 | agent  | Added PB-042 (Bug/Medium): ANSI escape codes in /query-sync stdout; fixed with `_strip_ansi()` in proxy. Added PB-043 (Feature): CPG visualization for Sprint 6. |
 | 2026-04-30 | agent  | Sprint 6 closed. Added PB-044–PB-047 for Sprint 7: standalone graph vis, all graph types, node metadata, playground refactor. |
 | 2026-04-30 | agent  | Sprint 7 complete: all 10 items done. 384 tests pass (+16 new). PB-044–PB-047 marked Done. |
+| 2026-05-07 | agent  | Added PB-048 (Bug/High) after reproducing `X-Session-Id` CPG overlap/trampling across concurrent sessions; assigned to Sprint 8. |
 
 
 ---
@@ -188,10 +191,22 @@ Target items:
 - ~~PB-046 (S7-003, S7-006, S7-007): Graph node metadata + interactive UX~~ Done
 - ~~PB-047 (S7-008, S7-009): Playground component refactor~~ Done
 
+### Sprint 8 — Session CPG isolation ✓ COMPLETE
+
+**Focus:** Fix `X-Session-Id` cross-session CPG leakage (PB-048).
+
+- ~~PB-048 (S8-001–S8-003): Session-level isolation + regression tests + `http_api.md`~~ Done
+
+### Sprint 9 (planned) — HTTP-first platform
+
+**Focus:** Remove MCP; `POST /parse/repo`; full HTTP docs; file vs repo benchmarks; consolidate `deploy/`.
+
+Target: PB-049 (S9-001–S9-010). See `.pms/backlog/sprint9.md` and `.pms/docs/sdd/sdd_v2_http_platform.md`.
+
 ### Future Sprints
 
-- Sprint 8: Developer experience (PB-007, PB-010) + nice-to-have MCP tools (PB-034–PB-037)
-- Sprint 9: Advanced features (PB-009, PB-011)
+- PB-007, PB-010: Developer experience / Python SDK
+- PB-009, PB-011: Rust support, CPG diff
 
 ---
 

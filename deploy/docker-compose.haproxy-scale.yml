@@ -47,6 +47,7 @@ services:
       CPG_ARCHIVE_DIR: "${CPG_ARCHIVE_DIR:-/workspace/cpg-archive}"
       CPG_ARCHIVE_MAX_COUNT: "${CPG_ARCHIVE_MAX_COUNT:-100}"
       CPG_ARCHIVE_MAX_GB: "${CPG_ARCHIVE_MAX_GB:-50}"
+      QUERY_CACHE_MAX_SIZE: "${QUERY_CACHE_MAX_SIZE:-0}"
     ulimits:
       nofile:
         soft: 65536
