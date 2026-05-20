@@ -1,0 +1,68 @@
+# Single Joern replica + autoheal (local dev / single-agent).
+#
+# Usage (from repo root):
+#   docker compose -f deploy/compose.dev.yml up -d
+#
+# HTTP entry point:
+#   http://localhost:${JOERN_PUBLISH_PORT:-8080}
+# Send X-Session-Id on stateful /query-sync traffic (sticky when behind HAProxy in scale profile).
+
+services:
+  joern:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: neuralatlas-joern:${JOERN_IMAGE_TAG:-local}
+    ports:
+      - "${JOERN_PUBLISH_PORT:-8080}:8080"
+    volumes:
+      - ../ingest:/workspace/ingest:ro
+      - joern-workspace:/workspace/joern-workspace
+      - cpg-out:/workspace/cpg-out
+      - cpg-archive:/workspace/cpg-archive
+    environment:
+      JOERN_SERVER_HOST: "${JOERN_SERVER_HOST:-0.0.0.0}"
+      JOERN_INTERNAL_PORT: "${JOERN_INTERNAL_PORT:-18080}"
+      JOERN_QUERY_TIMEOUT_SEC: "${JOERN_QUERY_TIMEOUT_SEC:-600}"
+      JOERN_JAVA_XMX: "${JOERN_JAVA_XMX:-1g}"
+      JOERN_SERVER_AUTH_USERNAME: "${JOERN_SERVER_AUTH_USERNAME:-}"
+      JOERN_SERVER_AUTH_PASSWORD: "${JOERN_SERVER_AUTH_PASSWORD:-}"
+      PROXY_PORT: "${JOERN_PUBLISH_PORT:-8080}"
+      CPG_ARCHIVE_DIR: "${CPG_ARCHIVE_DIR:-/workspace/cpg-archive}"
+      CPG_ARCHIVE_MAX_COUNT: "${CPG_ARCHIVE_MAX_COUNT:-100}"
+      CPG_ARCHIVE_MAX_GB: "${CPG_ARCHIVE_MAX_GB:-50}"
+      QUERY_CACHE_MAX_SIZE: "${QUERY_CACHE_MAX_SIZE:-0}"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    deploy:
+      resources:
+        limits:
+          memory: "${JOERN_MEMORY_LIMIT:-4g}"
+        reservations:
+          memory: 1g
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/joern-healthcheck.sh"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 120s
+    labels:
+      autoheal: "true"
+    restart: unless-stopped
+
+  autoheal:
+    image: willfarrell/autoheal
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: "${AUTOHEAL_INTERVAL:-10}"
+      AUTOHEAL_START_PERIOD: "${AUTOHEAL_START_PERIOD:-180}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+volumes:
+  joern-workspace:
+  cpg-out:
+  cpg-archive:
