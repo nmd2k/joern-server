@@ -1,6 +1,7 @@
 # Joern Server
 
-HTTP proxy and deployment stack for [Joern](https://joern.io/) CPG analysis. Clients integrate via **CPGQL** on port **8080** — no MCP layer.
+HTTP proxy and deployment stack hosting [Joern](https://joern.io/) CPG analysis for LLM agent. 
+Agent integrate via **CPGQL** on default port **8080**.
 
 ## Architecture
 
@@ -21,22 +22,6 @@ Joern HTTP REPL (in-container, :8081)
       ▼
 /workspace/cpg-out/<sample_id>
 ```
-
-## Project structure
-
-```
-joern-server/
-├── joern_server/
-│   ├── proxy.py           # HTTP API
-│   └── client.py          # JoernHTTPQueryExecutor
-├── playground-server/     # Optional dev UI (parse + CPGQL query)
-├── deploy/
-│   ├── compose.dev.yml    # Single replica
-│   └── compose.scale.yml  # HAProxy + N replicas
-└── tests/
-```
-
-Internal design docs live in `docs/` and `.pms/` (not in git).
 
 ## Quick start
 
