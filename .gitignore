@@ -1,6 +1,8 @@
 # Internal project management and design docs (not published in git)
 .pms/
-docs/
+
+# MkDocs build directory
+site/
 deploy/.env
 */.env
 *.egg-info/
