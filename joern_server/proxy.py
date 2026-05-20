@@ -633,6 +633,12 @@ class LRUCache:
 
 
 class CPGRegistry:
+    """
+    Registry for tracking compiled Code Property Graphs (CPGs).
+
+    Manages persistent metadata storage, lookup by source hash,
+    and automatic LRU eviction based on count and disk space limits.
+    """
     def __init__(self, registry_path: Path, archive_max_count: int = 100, archive_max_gb: float = 50.0):
         self._path = registry_path
         self._lock = threading.Lock()
@@ -782,6 +788,12 @@ def _cpg_size_bytes(path: Path) -> int:
 
 
 class JoernProxyHandler(BaseHTTPRequestHandler):
+    """
+    HTTP request handler implementing the Joern Server API.
+
+    Coordinates authentication, session-sticky query routing, cache integration,
+    repository/archive ingestion, and graph serialization.
+    """
     internal_url: str = ""
     parse_bin: str = "/opt/joern/joern-cli/joern-parse"
     cpg_out_dir: str = "/workspace/cpg-out"
