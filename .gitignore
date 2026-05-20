@@ -1,4 +1,6 @@
-.pms/*
+# Internal project management and design docs (not published in git)
+.pms/
+docs/
 deploy/.env
 */.env
 *.egg-info/

@@ -33,11 +33,10 @@ joern-server/
 ├── deploy/
 │   ├── compose.dev.yml    # Single replica
 │   └── compose.scale.yml  # HAProxy + N replicas
-├── tests/
-└── docs/
-    ├── ARCHITECTURE.md
-    └── CLIENT_GUIDE.md
+└── tests/
 ```
+
+Internal design docs live in `docs/` and `.pms/` (not in git).
 
 ## Quick start
 
@@ -77,7 +76,7 @@ curl -s -X POST http://127.0.0.1:8080/query-sync \
   -d '{"query":"cpg.method.name.l"}'
 ```
 
-Full workflows: [docs/CLIENT_GUIDE.md](docs/CLIENT_GUIDE.md).
+See `deploy/README.md` for compose profiles and environment variables.
 
 ## Testing
 
@@ -88,13 +87,12 @@ pytest -m integration   # needs running Joern
 
 ## Session affinity
 
-Send the same `X-Session-Id` on every request when using HAProxy scale mode so `importCpg` state stays on one replica. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Send the same `X-Session-Id` on every request when using HAProxy scale mode so `importCpg` state stays on one replica.
 
 ## References
 
 - [Joern docs](https://docs.joern.io/)
-- [Client guide](docs/CLIENT_GUIDE.md)
-- [API reference](.pms/docs/api/http_api.md)
+- [deploy/README.md](deploy/README.md)
 
 ## License
 
