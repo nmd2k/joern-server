@@ -65,12 +65,25 @@ POST /parse/repo            application/json
 | S9-004 | Upload staging + `upload_id` parse |
 | S9-005 | Ops `source_root` (medium) |
 | S9-006 | Tree hash + CPGRegistry cache |
-| S9-007 | `docs/ARCHITECTURE.md`, `docs/CLIENT_GUIDE.md` |
-| S9-008 | Complete `http_api.md` |
+| S9-007 | `docs/ARCHITECTURE.md`, `docs/CLIENT_GUIDE.md` | **Done** |
+| S9-008 | Complete `http_api.md` | **Done** |
 | S9-009 | File vs repo benchmarks |
 | S9-010 | Consolidate `deploy/` |
 | S9-011 | Close PB-005 (superseded) |
-| S9-012 | MCP → HTTP migration table |
+| S9-012 | MCP → HTTP migration table | **Done** (`docs/MCP_MIGRATION.md`) |
+
+---
+
+## Documentation status (S9-007 / S9-008 / S9-012)
+
+| Deliverable | Path | Status |
+|-------------|------|--------|
+| Architecture | `docs/ARCHITECTURE.md` | Done |
+| Client guide | `docs/CLIENT_GUIDE.md` | Done |
+| HTTP API (repo parse) | `.pms/docs/api/http_api.md` | Done |
+| MCP migration | `docs/MCP_MIGRATION.md` | Done |
+
+Docs describe the **approved** API contract; implementation may land in parallel (S9-003, S9-004).
 
 ---
 

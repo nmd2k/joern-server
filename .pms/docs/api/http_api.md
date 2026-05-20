@@ -90,7 +90,171 @@ Parse **inline source** into a CPG. One request = one source file written to a t
 **Response (success):** `ok`, `sample_id`, `cpg_path`, `language`, `cache_hit`, `source_hash`  
 **Caching:** SHA-256 of `source_code`; archive registry may return `cache_hit: true` without re-parsing.
 
-**Limitation:** This is **not** repo-level parsing. Cross-file edges exist only when the single snippet includes them. See Sprint 9 design for `POST /parse/repo`.
+**Limitation:** This is **not** repo-level parsing. Cross-file edges exist only when the single snippet includes them. For multi-file projects use [`POST /parse/repo`](#post-parserepo).
+
+**Errors (file parse):**
+
+| HTTP | `code` | When |
+|------|--------|------|
+| 400 | `bad_request` | Missing `sample_id` / `source_code` |
+| 409 | `cpg_exists` | Output exists, `overwrite=false` |
+| 504 | `parse_timeout` | `joern-parse` subprocess timeout |
+| 502 | `parse_failed` | Subprocess failed (non-timeout) |
+
+---
+
+### `POST /parse/repo`
+
+Parse a **directory tree** into **one CPG** at `/workspace/cpg-out/<sample_id>`. Remote clients should use **JSONL** or **upload** ingest; `source_root` is ops-only.
+
+**Mutual exclusion:** Each request uses **exactly one** ingest mode:
+
+| Mode | Content-Type | Body |
+|------|--------------|------|
+| JSONL | `application/x-ndjson` | Stream of `{"path","content"}` lines; metadata in **query params** |
+| Upload trigger | `application/json` | `{"sample_id","upload_id","language?","overwrite?"}` |
+| Ops | `application/json` | `{"sample_id","source_root","language?","overwrite?"}` |
+
+Do not send JSONL body and JSON `upload_id` in the same request.
+
+#### JSONL ingest (primary)
+
+**Query parameters** (required metadata — not a special first NDJSON line):
+
+| Param | Required | Description |
+|-------|----------|-------------|
+| `sample_id` | yes | Output name under `/workspace/cpg-out/`; sanitized to `[a-zA-Z0-9._-]` |
+| `language` | no | Joern frontend (`c`, `pythonsrc`, `jssrc`, …); aliases normalized like `/parse` |
+| `overwrite` | no | Default `false` |
+
+**Headers:**
+
+| Header | Required | Description |
+|--------|----------|-------------|
+| `Content-Type` | yes | `application/x-ndjson` |
+| `X-Session-Id` | no | Optional; parse is stateless (logging / future use) |
+
+**Body:** one JSON object per line (NDJSON). Blank lines are ignored.
+
+| Field | Type | Rules |
+|-------|------|--------|
+| `path` | string | Relative POSIX path; no `..`, no leading `/`, no `\0` |
+| `content` | string | UTF-8 file body; server normalizes line endings to `\n` |
+
+**Example line:**
+
+```json
+{"path":"src/main.c","content":"#include <stdio.h>\nint main(){return 0;}"}
+```
+
+**Example request:**
+
+```bash
+curl -s -u "joern:change-me" -X POST \
+  "http://localhost:8080/parse/repo?sample_id=my-app&language=c&overwrite=false" \
+  -H 'Content-Type: application/x-ndjson' \
+  --data-binary @repo.ndjson
+```
+
+**Server pipeline:** stream lines → write files under temp dir → canonical tree `source_hash` → `joern-parse` → `/workspace/cpg-out/<sample_id>` → CPGRegistry.
+
+**Limits (env-configurable):**
+
+| Env | Default | Purpose |
+|-----|---------|---------|
+| `PARSE_REPO_MAX_FILES` | `2000` | Max NDJSON lines / files |
+| `PARSE_REPO_MAX_BYTES` | `50000000` | Total decoded `content` bytes |
+| `JOERN_PARSE_REPO_TIMEOUT_SEC` | `1800` | `joern-parse` subprocess timeout |
+
+#### Upload ingest (two steps)
+
+**Step 1 — `POST /parse/repo/upload`**
+
+`multipart/form-data`:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `archive` | yes | `.zip` or `.tar.gz` of repository root |
+
+**Limits:** `PARSE_REPO_MAX_ARCHIVE_MB` (default `500`).
+
+**Response (success):**
+
+```json
+{
+  "ok": true,
+  "upload_id": "550e8400-e29b-41d4-a716-446655440000",
+  "expires_at": "2026-05-21T12:00:00Z",
+  "bytes_stored": 104857600,
+  "file_count_hint": null
+}
+```
+
+Archive stored at `/workspace/repo-uploads/<upload_id>/` until expiry (default **24h**).
+
+**Step 2 — `POST /parse/repo`** with `Content-Type: application/json`:
+
+```json
+{
+  "sample_id": "my-app",
+  "upload_id": "550e8400-e29b-41d4-a716-446655440000",
+  "language": "c",
+  "overwrite": false
+}
+```
+
+Server extracts staged archive → same pipeline as JSONL. Response sets `"ingest_mode": "upload"`.
+
+#### Ops ingest (`source_root`)
+
+For datasets already on the server (bind-mounted SVEN, internal CI). **Not** the default for external integrators.
+
+```json
+{
+  "sample_id": "sven-abc123",
+  "source_root": "/workspace/datasets/sven/abc123",
+  "language": "c",
+  "overwrite": false
+}
+```
+
+Allow-list: `PARSE_REPO_ALLOWED_ROOTS` (default `/workspace/datasets`). Response sets `"ingest_mode": "source_root"`.
+
+#### Response envelope (repo, success)
+
+Extends file `/parse` response:
+
+```json
+{
+  "ok": true,
+  "sample_id": "my-app",
+  "cpg_path": "/workspace/cpg-out/my-app",
+  "language": "c",
+  "cache_hit": false,
+  "source_hash": "<canonical tree sha256 hex>",
+  "parse_mode": "repo",
+  "ingest_mode": "jsonl",
+  "file_count": 142
+}
+```
+
+`ingest_mode` is one of `jsonl`, `upload`, `source_root`.
+
+**Cache key (repo):** `source_hash = SHA256( for path in sorted(paths): path + "\0" + SHA256(content) + "\n" )`. Registry may return `cache_hit: true` for identical tree content under a different `sample_id`.
+
+#### Errors (repo parse)
+
+| HTTP | `code` | When |
+|------|--------|------|
+| 400 | `bad_request` | Malformed JSON, missing `sample_id`, mixed ingest modes |
+| 400 | `invalid_path` | `..`, absolute path, illegal characters in `path` |
+| 400 | `empty_tree` | Zero files after ingest |
+| 400 | `invalid_source_root` | Ops path outside allow-list |
+| 404 | `upload_not_found` | Unknown `upload_id` |
+| 409 | `cpg_exists` | Output exists, `overwrite=false` |
+| 410 | `upload_expired` | Past `expires_at` |
+| 413 | `payload_too_large` | File count, bytes, or archive over limit |
+| 504 | `parse_timeout` | Subprocess timeout |
 
 ---
 
@@ -127,11 +291,13 @@ Query LRU cache stats (when `QUERY_CACHE_MAX_SIZE` > 0).
 
 ---
 
-## Planned (Sprint 9+)
+## Related documentation
 
-| Endpoint | Purpose |
-|----------|---------|
-| `POST /parse/repo` | Parse a directory tree (mounted path or uploaded archive) into one CPG |
-| Deprecation | MCP layer (`mcp-joern/`) removed; HTTP-only clients |
+| Doc | Purpose |
+|-----|---------|
+| `docs/ARCHITECTURE.md` | System diagram, parse modes, session model |
+| `docs/CLIENT_GUIDE.md` | curl quick start, JSONL builder, sticky sessions |
+| `docs/MCP_MIGRATION.md` | Former MCP tools → HTTP/CPGQL |
+| `.pms/docs/sdd/sdd_v2_http_platform.md` | Approved design decisions |
 
-See `.pms/backlog/sprint9.md` and `.pms/docs/sdd/sdd_v2_http_platform.md`.
+**Platform note:** MCP (`mcp-joern/`, port `:9000`) is removed from target production deploy; HTTP `:8080` only.
