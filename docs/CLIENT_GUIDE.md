@@ -10,7 +10,7 @@ export JOERN_AUTH="-u joern:change-me"   # omit if auth disabled
 export SESSION=my-run-$(date +%s)
 ```
 
-Full API details: [`.pms/docs/api/http_api.md`](../.pms/docs/api/http_api.md). Architecture: [ARCHITECTURE.md](ARCHITECTURE.md). MCP migration: [MCP_MIGRATION.md](MCP_MIGRATION.md).
+Full API details: [`.pms/docs/api/http_api.md`](../.pms/docs/api/http_api.md). Architecture: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
@@ -113,8 +113,6 @@ curl -s $JOERN_AUTH \
   -d '{"query":"cpg.method.name.take(20).l"}' \
   "$JOERN_URL/query-sync" | jq .
 ```
-
-For custom `server_tools.sc` helpers (legacy MCP parity), also run `load_cpg("…")` after `importCpg` — see [MCP_MIGRATION.md](MCP_MIGRATION.md).
 
 ### Graph endpoint (optional)
 
@@ -265,5 +263,4 @@ sequenceDiagram
 ## Further reading
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — components, storage, session model
-- [MCP_MIGRATION.md](MCP_MIGRATION.md) — former MCP tools → HTTP/CPGQL
 - [deploy/README.md](../deploy/README.md) — compose, env vars, memory tuning

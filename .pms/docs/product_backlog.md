@@ -62,7 +62,7 @@
 | PB-046 | Graph node metadata: code, line, params, identifiers                         | Feature | High     | Done     | 7 | All `/graph/*` enriched with per-node metadata map; hover tooltip + click detail panel. See S7-003, S7-006, S7-007. |
 | PB-047 | Playground file/module organization refactor                                 | Chore   | Medium   | Done     | 7 | `app.js` (350→27L) split into 3 Vue components; `index.html` (176→18L) minimal scaffold. See S7-008, S7-009. |
 | PB-048 | Enforce session-level CPG isolation for `/query-sync` + `importCpg`         | Bug     | High     | Done     | 8 | Session-scoped `importCpg` tracking + activation gate; regression tests; `http_api.md` session contract. |
-| PB-049 | HTTP-first platform: remove MCP, repo parse, docs, deploy cleanup           | Epic    | High     | Planned  | 9 | See sprint9.md: `/parse/repo`, MCP removal, ARCHITECTURE/CLIENT_GUIDE, benchmark file vs repo, consolidate deploy compose. |
+| PB-049 | HTTP-first platform: remove MCP, repo parse, docs, deploy cleanup           | Epic    | High     | Planned  | 9 | Approved: remote repo via **JSONL** `POST /parse/repo` + **upload** for heavy repos; MCP removal; docs + benchmarks; deploy cleanup. See `.pms/backlog/sprint9.md`. |
 
 
 ---
@@ -199,9 +199,11 @@ Target items:
 
 ### Sprint 9 (planned) — HTTP-first platform
 
-**Focus:** Remove MCP; `POST /parse/repo`; full HTTP docs; file vs repo benchmarks; consolidate `deploy/`.
+**Focus:** Remove MCP; repo parse for remote clients (**JSONL** + **upload**); full HTTP docs; file vs repo benchmarks; consolidate `deploy/`.
 
-Target: PB-049 (S9-001–S9-010). See `.pms/backlog/sprint9.md` and `.pms/docs/sdd/sdd_v2_http_platform.md`.
+**Approved ingest:** `POST /parse/repo` with `application/x-ndjson` (one JSON object per file); heavy repos via `POST /parse/repo/upload` then parse with `upload_id`. Do not use repeated `POST /parse` for multi-file projects.
+
+Target: PB-049 (S9-001–S9-012). See `.pms/backlog/sprint9.md`, `.pms/docs/sdd/sdd_v2_http_platform.md`, `docs/ROADMAP_SPRINT9.md`.
 
 ### Future Sprints
 

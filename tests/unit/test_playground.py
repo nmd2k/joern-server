@@ -4,12 +4,10 @@ Covers:
   1. GET /playground returns valid HTML
   2. GET /playground/styles.css returns CSS
   3. GET /playground/app.js returns JavaScript
-  4. GET /playground/tool-definitions.js returns JavaScript
-  5. GET /playground/nonexistent returns 404
-  6. Tool definitions contain all 25 tools with descriptions
-  7. Parameter schemas for tool UI rendering
-  8. Path traversal protection for static file serving
-  9. Vue app structure (createApp, mount, panels)
+  4. GET /playground/nonexistent returns 404
+  5. No MCP tool panel or tool-definitions.js (HTTP CPGQL only)
+  6. Path traversal protection for static file serving
+  7. Vue app structure (parse + query panels)
 
 Run with:
     pytest tests/unit/test_playground.py -v
@@ -133,17 +131,21 @@ class TestPlaygroundRoute:
         assert "{" in content, "CSS should contain braces"
 
     def test_playground_js_servable(self):
-        """playground/app.js and tool-definitions.js exist and are valid."""
+        """playground/app.js and panel components exist."""
         playground_dir = os.path.normpath(
             os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
 
-        for js_file in ["app.js", "tool-definitions.js"]:
+        for js_file in [
+            "app.js",
+            "components/parse-panel.js",
+            "components/query-panel.js",
+        ]:
             path = os.path.join(playground_dir, js_file)
             assert os.path.isfile(path), f"{js_file} missing: {path}"
             with open(path, "r", encoding="utf-8") as f:
                 content = f.read()
-            assert len(content) > 100, f"{js_file} too small"
+            assert len(content) > 50, f"{js_file} too small"
 
     def test_playground_nonexistent_file_returns_404(self):
         """/playground/nonexistent.js should return 404."""
@@ -169,97 +171,24 @@ class TestPlaygroundRoute:
 
         assert "/playground/styles.css" in content, "index.html must reference styles.css"
         assert "/playground/app.js" in content, "index.html must reference app.js"
-        assert "/playground/tool-definitions.js" in content, "index.html must reference tool-definitions.js"
+        assert "tool-definitions.js" not in content
+        assert "tools-panel" not in content
 
 
-class TestPlaygroundToolDefinitions:
-    """S5-005 / S9-002: Joern tool metadata and CPGQL builders (no MCP bridge)."""
+class TestPlaygroundNoMcpTools:
+    """S9: Playground is parse + raw CPGQL only — no MCP tool runner."""
 
-    def test_all_25_tools_defined(self):
-        """All Joern tools (24 + parse_source) are in tool-definitions.js."""
+    def test_tool_definitions_removed(self):
         playground_dir = os.path.normpath(
             os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
-        path = os.path.join(playground_dir, "tool-definitions.js")
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read()
+        assert not os.path.isfile(os.path.join(playground_dir, "tool-definitions.js"))
 
-        expected_tools = [
-            "ping", "check_connection", "get_help",
-            "load_cpg", "parse_source",
-            "get_method_callees", "get_method_callers",
-            "get_method_code_by_full_name", "get_method_code_by_id",
-            "get_method_full_name_by_id",
-            "get_calls_in_method_by_method_full_name",
-            "get_call_code_by_id", "get_method_by_call_id",
-            "get_referenced_method_full_name_by_call_id",
-            "get_class_methods_by_class_full_name",
-            "get_method_code_by_class_full_name_and_method_name",
-            "get_class_full_name_by_id",
-            "get_derived_classes_by_class_full_name",
-            "get_parent_classes_by_class_full_name",
-            "find_methods", "find_calls", "get_dataflow",
-            "get_call_arguments", "find_literals", "get_method_location",
-        ]
-
-        for tool in expected_tools:
-            assert tool in content, f"Tool '{tool}' missing from tool-definitions.js"
-
-    def test_tool_groups_present(self):
-        """Tool definitions include group names for dropdown categorization."""
+    def test_tools_panel_removed(self):
         playground_dir = os.path.normpath(
             os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
-        path = os.path.join(playground_dir, "tool-definitions.js")
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read()
-
-        expected_groups = [
-            "Connectivity", "CPG Loading", "Method Analysis",
-            "Call Analysis", "Class Analysis", "Vulnerability Hunting",
-        ]
-        for group in expected_groups:
-            assert group in content, f"Tool group '{group}' missing"
-
-    def test_key_tool_definitions_have_descriptions(self):
-        """Verify all 25 tool definitions have descriptions."""
-        playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
-        )
-        path = os.path.join(playground_dir, "tool-definitions.js")
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read()
-
-        # All tools should have description field (no CPGQL translation in frontend)
-        assert "description" in content
-
-        # Tool names must still be defined
-        assert "get_method_callees" in content
-        assert "find_methods" in content
-        assert "find_calls" in content
-        assert "get_dataflow" in content
-        assert "get_call_arguments" in content
-        assert "load_cpg" in content
-
-        # parse_source must have _custom flag (calls /api/parse directly)
-        assert "_custom: true" in content
-
-        # escapeCPGQL and buildQuery helpers (HTTP /query-sync path)
-        assert "escapeCPGQL" in content
-        assert "function buildQuery" in content
-        assert "window.buildQuery" in content
-
-    def test_tools_panel_uses_query_sync_not_mcp(self):
-        """tools-panel.js must call /api/query-sync, not /mcp/tools."""
-        playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
-        )
-        path = os.path.join(playground_dir, "components", "tools-panel.js")
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read()
-        assert "/api/query-sync" in content
-        assert "/mcp/tools" not in content
-        assert "MCP Tool Runner" not in content
+        assert not os.path.isfile(os.path.join(playground_dir, "components", "tools-panel.js"))
 
     def test_playground_server_has_no_mcp_bridge(self):
         """playground-server/server.js must not expose MCP routes."""
@@ -271,17 +200,6 @@ class TestPlaygroundToolDefinitions:
         assert "/mcp/tools" not in content
         assert "MCP_SERVER_URL" not in content
         assert "mcp_connected" not in content
-
-    def test_escape_cpgql_helper_exists(self):
-        """escapeCPGQL function should exist in tool-definitions.js."""
-        playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
-        )
-        path = os.path.join(playground_dir, "tool-definitions.js")
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read()
-
-        assert "escapeCPGQL" in content, "escapeCPGQL helper function missing"
 
 
 class TestPlaygroundAppStructure:
@@ -308,7 +226,7 @@ class TestPlaygroundAppStructure:
 
         assert "query" in content.lower(), "Query panel missing"
 
-    def test_index_html_contains_tool_panel(self):
+    def test_index_html_has_no_tools_panel(self):
         playground_dir = os.path.normpath(
             os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
@@ -316,7 +234,7 @@ class TestPlaygroundAppStructure:
         with open(path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        assert "tool" in content.lower(), "Tool panel missing"
+        assert "tools-panel" not in content
 
     def test_app_js_contains_vue_createapp(self):
         playground_dir = os.path.normpath(
@@ -328,16 +246,7 @@ class TestPlaygroundAppStructure:
 
         assert "createApp" in content, "Vue createApp missing"
         assert ".mount(" in content, "Vue mount missing"
-
-    def test_app_js_references_tool_definitions(self):
-        playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
-        )
-        path = os.path.join(playground_dir, "components", "tools-panel.js")
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read()
-
-        assert "JOERN_TOOLS" in content, "tools-panel.js must reference window.JOERN_TOOLS"
+        assert "tools-panel" not in content
 
 
 class TestDockerDeployNoMcp:
@@ -350,8 +259,9 @@ class TestDockerDeployNoMcp:
         with open(entrypoint, "r", encoding="utf-8") as f:
             content = f.read()
         assert "start_mcp" not in content
-        assert "server.py" not in content
+        assert "mcp-joern" not in content
         assert "MCP_PORT" not in content
+        assert "mcp_joern" not in content
 
     def test_dockerfile_exposes_http_only(self):
         dockerfile = os.path.normpath(
@@ -427,6 +337,5 @@ class TestPlaygroundPathTraversal:
         assert _servable("index.html") is True
         assert _servable("styles.css") is True
         assert _servable("app.js") is True
-        assert _servable("tool-definitions.js") is True
         assert _servable("../../etc/passwd") is False
         assert _servable("../../../joern_server/proxy.py") is False

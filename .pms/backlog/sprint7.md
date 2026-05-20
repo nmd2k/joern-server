@@ -244,17 +244,17 @@ Shared state via `window.PlaygroundState = Vue.reactive({...})` — keeps parse/
 
 ## Definition of Done
 
-- [ ] S7-001: `/graph/pdg` endpoint returns PDG for a given method
-- [ ] S7-002: `/graph/ast` endpoint returns AST tree for a given method
-- [ ] S7-003: All graph endpoints include `metadata` map with node properties
-- [ ] S7-004: Standalone `/graph` page served by Express, independent of playground
-- [ ] S7-005: Graph type selector (CFG/DDG/PDG/AST) in frontend
-- [ ] S7-006: Hover tooltip shows node type, label, and line number
-- [ ] S7-007: Click detail panel shows full node metadata
-- [ ] S7-008: `app.js` split into 3 panel components
-- [ ] S7-009: `index.html` panel templates extracted into component files
-- [ ] S7-010: Tests for new endpoints + no regressions
-- [ ] Sprint report written at `report/sprint7-report.md`
+- [x] S7-001: `/graph/pdg` endpoint returns PDG for a given method
+- [x] S7-002: `/graph/ast` endpoint returns AST tree for a given method
+- [x] S7-003: All graph endpoints include `metadata` map with node properties
+- [x] S7-004: Standalone `/graph` page served by Express, independent of playground
+- [x] S7-005: Graph type selector (CFG/DDG/PDG/AST) in frontend
+- [x] S7-006: Hover tooltip shows node type, label, and line number
+- [x] S7-007: Click detail panel shows full node metadata
+- [x] S7-008: `app.js` split into 3 panel components
+- [x] S7-009: `index.html` panel templates extracted into component files
+- [x] S7-010: Tests for new endpoints + no regressions
+- [x] Sprint report written at `report/sprint7-report.md`
 
 ---
 

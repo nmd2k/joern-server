@@ -102,11 +102,6 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ query: 'importCpg("' + self.escapeCPGQL(cpgPath) + '")' })
               });
-              await fetch('/api/query-sync', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query: 'load_cpg("' + self.escapeCPGQL(cpgPath) + '")' })
-              });
             } catch (e) { /* best-effort */ }
           } else {
             self.parseError = JSON.stringify(data, null, 2);

@@ -70,7 +70,7 @@ POST /parse/repo            application/json
 | S9-009 | File vs repo benchmarks |
 | S9-010 | Consolidate `deploy/` |
 | S9-011 | Close PB-005 (superseded) |
-| S9-012 | MCP → HTTP migration table | **Done** (`docs/MCP_MIGRATION.md`) |
+| S9-012 | Remove MCP + tool wrappers entirely | **Done** (no `mcp-joern/`, CPGQL-only) |
 
 ---
 
@@ -81,7 +81,6 @@ POST /parse/repo            application/json
 | Architecture | `docs/ARCHITECTURE.md` | Done |
 | Client guide | `docs/CLIENT_GUIDE.md` | Done |
 | HTTP API (repo parse) | `.pms/docs/api/http_api.md` | Done |
-| MCP migration | `docs/MCP_MIGRATION.md` | Done |
 
 Docs describe the **approved** API contract; implementation may land in parallel (S9-003, S9-004).
 

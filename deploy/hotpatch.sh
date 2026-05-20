@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # hotpatch.sh — push code changes into running Joern containers without a full image rebuild.
 #
-# Use this when you have changed Python files only (joern_server/ or mcp-joern/) and
+# Use this when you have changed Python files only (joern_server/) and
 # want to apply the change immediately without waiting for a Docker image build.
 #
 # WARNING: hot-patched changes are NOT persistent. If a container is recreated from the
@@ -22,9 +22,6 @@ COMPOSE_PREFIX="${COMPOSE_PREFIX:-deploy}"
 # Add more paths here as needed (directories are copied recursively).
 SYNC_PATHS=(
   "joern_server"
-  "mcp-joern/server_tools.py"
-  "mcp-joern/server_tools.sc"
-  "mcp-joern/common_tools.py"
 )
 
 patch_container() {

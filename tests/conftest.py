@@ -18,9 +18,3 @@ def pytest_configure(config):
 def repo_root():
     """Return the repository root directory."""
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-@pytest.fixture(scope="session")
-def mcp_joern_dir(repo_root):
-    """Return the mcp-joern directory path."""
-    return os.path.join(repo_root, "mcp-joern")

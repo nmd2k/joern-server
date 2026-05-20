@@ -35,7 +35,6 @@ COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/joern-server-entrypoint.sh
 COPY --chmod=755 docker/healthcheck.sh /usr/local/bin/joern-healthcheck.sh
 COPY --chmod=755 docker/unified-entrypoint.sh /usr/local/bin/neuralatlas-unified-entrypoint.sh
 
-COPY --chown=joern:joern mcp-joern /app/mcp-joern
 COPY --chown=joern:joern joern_server /app/joern_server
 # COPY --chown=joern:joern playground /app/playground
 

@@ -2,7 +2,7 @@
 
 NeuralAtlas exposes Joern as a **stateless parse API** plus a **session-scoped query REPL** behind a single HTTP entry point. Remote clients never talk to Joern’s internal port directly.
 
-**Related docs:** [CLIENT_GUIDE.md](CLIENT_GUIDE.md) · [MCP_MIGRATION.md](MCP_MIGRATION.md) · [deploy/README.md](../deploy/README.md) · [`.pms/docs/api/http_api.md`](../.pms/docs/api/http_api.md)
+**Related docs:** [CLIENT_GUIDE.md](CLIENT_GUIDE.md) · [deploy/README.md](../deploy/README.md) · [`.pms/docs/api/http_api.md`](../.pms/docs/api/http_api.md)
 
 ---
 
@@ -39,7 +39,7 @@ NeuralAtlas exposes Joern as a **stateless parse API** plus a **session-scoped q
               /workspace/repo-uploads/<id>/      ← staged archives (TTL)
 ```
 
-**Not in target architecture:** MCP-over-SSE (`mcp-joern/`, port `:9000`), playground MCP tool bridge. Production deploy is **HTTP `:8080` only** (Sprint 9).
+**Out of scope:** MCP-over-SSE, named “tool” wrappers (`get_method_callees`, etc.). Clients send **raw CPGQL** via `/query-sync`. Production deploy is **HTTP `:8080` only**.
 
 ---
 
@@ -119,7 +119,7 @@ See [CLIENT_GUIDE.md](CLIENT_GUIDE.md) for a full `importCpg` + `query-sync` wal
 | `POST /graph/cfg` \| `dfg` \| `ddg` \| `pdg` \| `ast` | Structured graph JSON for a `method_full_name` |
 | `POST /cleanup` | Remove or archive a CPG by `sample_id` |
 
-Former MCP “helper” tools (`get_method_callees`, etc.) map to the same CPGQL or `server_tools.sc` functions via `/query-sync` — see [MCP_MIGRATION.md](MCP_MIGRATION.md).
+Use standard Joern CPGQL (e.g. `cpg.method.name.l`, `cpg.call.name("exec").l`) via `/query-sync` after `importCpg`.
 
 ---
 

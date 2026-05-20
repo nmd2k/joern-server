@@ -12,7 +12,6 @@
       '<h1>Joern CPG Playground</h1>' +
       '<parse-panel></parse-panel>' +
       '<query-panel></query-panel>' +
-      '<tools-panel></tools-panel>' +
       '<div style="text-align:center;margin-top:16px;padding:12px">' +
         '<a href="/graph" target="_blank" class="btn btn-secondary">Open Graph Visualization</a>' +
       '</div>' +
@@ -21,7 +20,6 @@
 
   app.component('parse-panel', window.ParsePanel);
   app.component('query-panel', window.QueryPanel);
-  app.component('tools-panel', window.ToolsPanel);
 
   app.mount('#app');
 })();
