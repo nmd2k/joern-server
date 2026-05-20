@@ -1,42 +1,85 @@
-# Roadmap — Sprint 9 (HTTP-first platform)
+# Sprint 9 — HTTP-first platform (approved plan)
 
-Local copies of sprint backlogs and SDDs also live under `.pms/` (may be gitignored).
+**Branch:** `sprint/9`  
+**Full backlog:** `.pms/backlog/sprint9.md`  
+**Design:** `.pms/docs/sdd/sdd_v2_http_platform.md`
+
+---
 
 ## Goals
 
-1. **Remove MCP** — clients use HTTP only (`:8080`).
-2. **Repo-level parse** — `POST /parse/repo` for whole project trees; keep `POST /parse` for single-file/snippet mode.
-3. **Documentation** — architecture, client guide, full `http_api.md`.
-4. **Benchmarks** — compare file-only vs repo CPG (latency + graph richness).
-5. **Deploy cleanup** — two compose profiles (`dev`, `scale`); archive redundant YAML.
+1. Remove MCP from deploy; HTTP `:8080` only.  
+2. **Repo CPG** for remote clients via **JSONL** + **upload** for heavy trees.  
+3. Document architecture and client usage (file vs repo).  
+4. Benchmark file-only vs repo parse quality and latency.  
+5. Simplify `deploy/` to two compose profiles.
 
-## API summary
+---
 
-| Endpoint | Mode | Input |
-|----------|------|--------|
-| `POST /parse` | File / snippet | `source_code` + `sample_id` (existing) |
-| `POST /parse/repo` | Repository | `source_root` on allow-listed mount (v1); optional zip upload (v2) |
+## Parse API (approved)
 
-## Architecture (target)
+### Single file (existing)
 
 ```
-HTTP clients → joern_server/proxy (:8080) → Joern REPL
+POST /parse
+{ "sample_id", "source_code", "language?", "filename?", "overwrite?" }
 ```
 
-No MCP SSE (`:9000`). Playground calls `/api/*` only.
-
-## Deploy target
+### Repo — JSONL (primary, remote clients)
 
 ```
-deploy/
-├── compose.dev.yml
-├── compose.scale.yml
-├── haproxy.cfg
-└── README.md   # single decision table
+POST /parse/repo?sample_id=my-app&language=c&overwrite=false
+Content-Type: application/x-ndjson
+
+{"path":"src/main.c","content":"..."}
+{"path":"src/util.h","content":"..."}
 ```
 
-## References
+One request → one temp tree → one `joern-parse` → one CPG.
 
-- Session isolation (Sprint 8): see `.pms/docs/api/http_api.md` on branch `sprint/8`
-- Detailed design: `.pms/docs/sdd/sdd_v2_http_platform.md`
-- Backlog: `.pms/backlog/sprint9.md`
+### Repo — heavy upload (two steps)
+
+```
+POST /parse/repo/upload     multipart: archive=@repo.zip
+→ { "upload_id", "expires_at" }
+
+POST /parse/repo            application/json
+→ { "sample_id", "upload_id", "language", "overwrite" }
+```
+
+### Repo — ops only (server-mounted data)
+
+```json
+{ "sample_id", "source_root": "/workspace/datasets/...", "language", "overwrite" }
+```
+
+---
+
+## Sprint 9 backlog (summary)
+
+| ID | Deliverable |
+|----|-------------|
+| S9-001 | Remove MCP from Docker/compose |
+| S9-002 | Remove playground MCP bridge |
+| S9-003 | JSONL `POST /parse/repo` |
+| S9-004 | Upload staging + `upload_id` parse |
+| S9-005 | Ops `source_root` (medium) |
+| S9-006 | Tree hash + CPGRegistry cache |
+| S9-007 | `docs/ARCHITECTURE.md`, `docs/CLIENT_GUIDE.md` |
+| S9-008 | Complete `http_api.md` |
+| S9-009 | File vs repo benchmarks |
+| S9-010 | Consolidate `deploy/` |
+| S9-011 | Close PB-005 (superseded) |
+| S9-012 | MCP → HTTP migration table |
+
+---
+
+## Out of scope
+
+Git clone on server, async job polling, multi-language monorepo in one parse.
+
+---
+
+## Merge prerequisite
+
+Merge Sprint 7 (#8) and Sprint 8 (#9) to `main` before branching `sprint/9`.
