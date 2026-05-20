@@ -1,14 +1,13 @@
-"""S5-006: Integration tests for web playground.
+"""S5-006/S6-009: Tests for playground frontend (standalone service).
 
 Covers:
   1. GET /playground returns valid HTML
   2. GET /playground/styles.css returns CSS
   3. GET /playground/app.js returns JavaScript
-  4. GET /playground/tool-definitions.js returns JavaScript
-  5. GET /playground/nonexistent returns 404
-  6. Tool definitions contain all 25 tools
-  7. CPGQL translation for key tools produces valid queries
-  8. Path traversal protection on playground routes
+  4. GET /playground/nonexistent returns 404
+  5. No MCP tool panel or tool-definitions.js (HTTP CPGQL only)
+  6. Path traversal protection for static file serving
+  7. Vue app structure (parse + query panels)
 
 Run with:
     pytest tests/unit/test_playground.py -v
@@ -104,7 +103,7 @@ class TestPlaygroundRoute:
         handler = _make_handler(proxy, "/playground")
 
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
         index_path = os.path.join(playground_dir, "index.html")
 
@@ -121,7 +120,7 @@ class TestPlaygroundRoute:
     def test_playground_css_servable(self):
         """playground/styles.css exists and contains valid CSS."""
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
         css_path = os.path.join(playground_dir, "styles.css")
         assert os.path.isfile(css_path), f"styles.css missing: {css_path}"
@@ -132,17 +131,21 @@ class TestPlaygroundRoute:
         assert "{" in content, "CSS should contain braces"
 
     def test_playground_js_servable(self):
-        """playground/app.js and tool-definitions.js exist and are valid."""
+        """playground/app.js and panel components exist."""
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
 
-        for js_file in ["app.js", "tool-definitions.js"]:
+        for js_file in [
+            "app.js",
+            "components/parse-panel.js",
+            "components/query-panel.js",
+        ]:
             path = os.path.join(playground_dir, js_file)
             assert os.path.isfile(path), f"{js_file} missing: {path}"
             with open(path, "r", encoding="utf-8") as f:
                 content = f.read()
-            assert len(content) > 100, f"{js_file} too small"
+            assert len(content) > 50, f"{js_file} too small"
 
     def test_playground_nonexistent_file_returns_404(self):
         """/playground/nonexistent.js should return 404."""
@@ -151,7 +154,7 @@ class TestPlaygroundRoute:
 
         # Just verify the path would be resolved correctly
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
         filename = "nonexistent.js"
         file_path = os.path.normpath(os.path.join(playground_dir, filename))
@@ -160,7 +163,7 @@ class TestPlaygroundRoute:
     def test_playground_proxied_resource_paths_use_relative_urls(self):
         """index.html should reference CSS/JS with /playground/ paths."""
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
         index_path = os.path.join(playground_dir, "index.html")
         with open(index_path, "r", encoding="utf-8") as f:
@@ -168,95 +171,35 @@ class TestPlaygroundRoute:
 
         assert "/playground/styles.css" in content, "index.html must reference styles.css"
         assert "/playground/app.js" in content, "index.html must reference app.js"
-        assert "/playground/tool-definitions.js" in content, "index.html must reference tool-definitions.js"
+        assert "tool-definitions.js" not in content
+        assert "tools-panel" not in content
 
 
-class TestPlaygroundToolDefinitions:
-    """S5-005: MCP tool → CPGQL translation correctness."""
+class TestPlaygroundNoMcpTools:
+    """S9: Playground is parse + raw CPGQL only — no MCP tool runner."""
 
-    def test_all_25_tools_defined(self):
-        """All MCP tools (24 + parse_source) are in tool-definitions.js."""
+    def test_tool_definitions_removed(self):
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
-        path = os.path.join(playground_dir, "tool-definitions.js")
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read()
+        assert not os.path.isfile(os.path.join(playground_dir, "tool-definitions.js"))
 
-        expected_tools = [
-            "ping", "check_connection", "get_help",
-            "load_cpg", "parse_source",
-            "get_method_callees", "get_method_callers",
-            "get_method_code_by_full_name", "get_method_code_by_id",
-            "get_method_full_name_by_id",
-            "get_calls_in_method_by_method_full_name",
-            "get_call_code_by_id", "get_method_by_call_id",
-            "get_referenced_method_full_name_by_call_id",
-            "get_class_methods_by_class_full_name",
-            "get_method_code_by_class_full_name_and_method_name",
-            "get_class_full_name_by_id",
-            "get_derived_classes_by_class_full_name",
-            "get_parent_classes_by_class_full_name",
-            "find_methods", "find_calls", "get_dataflow",
-            "get_call_arguments", "find_literals", "get_method_location",
-        ]
-
-        for tool in expected_tools:
-            assert tool in content, f"Tool '{tool}' missing from tool-definitions.js"
-
-    def test_tool_groups_present(self):
-        """Tool definitions include group names for dropdown categorization."""
+    def test_tools_panel_removed(self):
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
-        path = os.path.join(playground_dir, "tool-definitions.js")
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read()
+        assert not os.path.isfile(os.path.join(playground_dir, "components", "tools-panel.js"))
 
-        expected_groups = [
-            "Connectivity", "CPG Loading", "Method Analysis",
-            "Call Analysis", "Class Analysis", "Vulnerability Hunting",
-        ]
-        for group in expected_groups:
-            assert group in content, f"Tool group '{group}' missing"
-
-    def test_key_cpgql_translations_contain_expected_patterns(self):
-        """Verify CPGQL translation functions produce valid-looking queries."""
-        playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+    def test_playground_server_has_no_mcp_bridge(self):
+        """playground-server/server.js must not expose MCP routes."""
+        server_path = os.path.normpath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "server.js")
         )
-        path = os.path.join(playground_dir, "tool-definitions.js")
-        with open(path, "r", encoding="utf-8") as f:
+        with open(server_path, "r", encoding="utf-8") as f:
             content = f.read()
-
-        # get_method_callees should call the Scala helper function
-        assert 'get_method_callees("' in content
-
-        # find_methods should build cpg.method chain
-        assert "cpg.method" in content
-
-        # find_calls should build cpg.call chain
-        assert "cpg.call.name" in content
-
-        # get_dataflow should use reachableByFlows
-        assert "reachableByFlows" in content
-
-        # get_call_arguments should use cpg.call.id
-        assert "cpg.call.id" in content
-
-        # load_cpg should call importCpg
-        assert "importCpg" in content
-
-    def test_escape_cpgql_helper_exists(self):
-        """escapeCPGQL function should exist in tool-definitions.js."""
-        playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
-        )
-        path = os.path.join(playground_dir, "tool-definitions.js")
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read()
-
-        assert "escapeCPGQL" in content, "escapeCPGQL helper function missing"
+        assert "/mcp/tools" not in content
+        assert "MCP_SERVER_URL" not in content
+        assert "mcp_connected" not in content
 
 
 class TestPlaygroundAppStructure:
@@ -264,18 +207,18 @@ class TestPlaygroundAppStructure:
 
     def test_index_html_contains_parse_panel(self):
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
         path = os.path.join(playground_dir, "index.html")
         with open(path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        assert "parse" in content.lower(), "Parse panel missing"
-        assert "source" in content.lower(), "Source code input missing"
+        assert "parse-panel" in content.lower(), "Parse panel component missing"
+        assert "parse" in content.lower(), "Parse panel reference missing"
 
     def test_index_html_contains_query_panel(self):
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
         path = os.path.join(playground_dir, "index.html")
         with open(path, "r", encoding="utf-8") as f:
@@ -283,19 +226,19 @@ class TestPlaygroundAppStructure:
 
         assert "query" in content.lower(), "Query panel missing"
 
-    def test_index_html_contains_tool_panel(self):
+    def test_index_html_has_no_tools_panel(self):
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
         path = os.path.join(playground_dir, "index.html")
         with open(path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        assert "tool" in content.lower(), "Tool panel missing"
+        assert "tools-panel" not in content
 
     def test_app_js_contains_vue_createapp(self):
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
         path = os.path.join(playground_dir, "app.js")
         with open(path, "r", encoding="utf-8") as f:
@@ -303,16 +246,32 @@ class TestPlaygroundAppStructure:
 
         assert "createApp" in content, "Vue createApp missing"
         assert ".mount(" in content, "Vue mount missing"
+        assert "tools-panel" not in content
 
-    def test_app_js_references_tool_definitions(self):
-        playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+
+class TestDockerDeployNoMcp:
+    """S9-001: Unified image entrypoint must not start MCP."""
+
+    def test_unified_entrypoint_does_not_start_mcp(self):
+        entrypoint = os.path.normpath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "docker", "unified-entrypoint.sh")
         )
-        path = os.path.join(playground_dir, "app.js")
-        with open(path, "r", encoding="utf-8") as f:
+        with open(entrypoint, "r", encoding="utf-8") as f:
             content = f.read()
+        assert "start_mcp" not in content
+        assert "mcp-joern" not in content
+        assert "MCP_PORT" not in content
+        assert "mcp_joern" not in content
 
-        assert "JOERN_TOOLS" in content, "app.js must reference window.JOERN_TOOLS"
+    def test_dockerfile_exposes_http_only(self):
+        dockerfile = os.path.normpath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "docker", "Dockerfile")
+        )
+        with open(dockerfile, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "EXPOSE 8080" in content
+        assert "EXPOSE 9000" not in content
+        assert "fastmcp" not in content.lower()
 
 
 class TestPlaygroundPathTraversal:
@@ -321,7 +280,7 @@ class TestPlaygroundPathTraversal:
     def test_proxy_path_traversal_defaults_to_index(self):
         """The proxy should resolve /playground to index.html, not escape the directory."""
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
 
         # Simulate path resolution logic
@@ -356,7 +315,7 @@ class TestPlaygroundPathTraversal:
         proxy = _import_proxy()
 
         playground_dir = os.path.normpath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "playground")
+            os.path.join(os.path.dirname(__file__), "..", "..", "playground-server", "public")
         )
 
         # Verify the proxy's playground handler logic (extracted from proxy.py)
@@ -378,6 +337,5 @@ class TestPlaygroundPathTraversal:
         assert _servable("index.html") is True
         assert _servable("styles.css") is True
         assert _servable("app.js") is True
-        assert _servable("tool-definitions.js") is True
         assert _servable("../../etc/passwd") is False
         assert _servable("../../../joern_server/proxy.py") is False

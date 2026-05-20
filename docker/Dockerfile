@@ -35,9 +35,8 @@ COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/joern-server-entrypoint.sh
 COPY --chmod=755 docker/healthcheck.sh /usr/local/bin/joern-healthcheck.sh
 COPY --chmod=755 docker/unified-entrypoint.sh /usr/local/bin/neuralatlas-unified-entrypoint.sh
 
-COPY --chown=joern:joern mcp-joern /app/mcp-joern
 COPY --chown=joern:joern joern_server /app/joern_server
-COPY --chown=joern:joern playground /app/playground
+# COPY --chown=joern:joern playground /app/playground
 
 # Include committed sample CPG used by integration tests and smoke checks.
 # The real Joern server runs inside the container, so the file must be present
@@ -45,14 +44,12 @@ COPY --chown=joern:joern playground /app/playground
 RUN mkdir -p /app/samples/c
 # COPY --chown=joern:joern samples/c/hello.cpg /app/samples/c/hello.cpg
 
-RUN python3 -m pip install --no-cache-dir -r /app/mcp-joern/requirements.txt \
-  && python3 -m pip install --no-cache-dir "httpx>=0.27.0"
+RUN python3 -m pip install --no-cache-dir "httpx>=0.27.0"
 
 USER joern
 WORKDIR /app
 
 EXPOSE 8080
-EXPOSE 9000
 
 HEALTHCHECK --interval=30s --timeout=15s --start-period=120s --retries=5 \
   CMD /usr/local/bin/joern-healthcheck.sh
