@@ -6,8 +6,8 @@
 # HTTP entry point (published by joern-haproxy, not by joern containers):
 #   http://localhost:${JOERN_HTTP_PORT:-8080}
 #
-# Sticky routing: send X-Session-Id on all turns of a conversation so CPG state
-# stays on the same replica. Source IP is the fallback when the header is absent.
+# Sticky routing: send X-Affinity-Key (sample_id) on /query-sync so REPL state stays
+# on one replica. Fallback: X-Session-Id, then source IP.
 
 networks:
   joern-net:

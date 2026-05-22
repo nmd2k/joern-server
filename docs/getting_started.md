@@ -1,135 +1,152 @@
-# Getting Started
+# Getting started
 
-This guide walks you through setting up and running your first code analysis with Joern Server.
+Run Joern Server locally, parse a snippet, and execute your first CPGQL query.
 
 ---
 
-## 1. Prerequisites
+## Prerequisites
 
-Make sure you have the following installed on your host system:
-- **Docker** and **Docker Compose** (to run the Joern Server)
-- **curl** (for API testing)
-- **Python 3.10+** (to run client scripts and compile/host the documentation website)
+- Docker and Docker Compose
+- `curl` (or any HTTP client)
+- Python 3.10+ (optional, for tests and MkDocs)
 
-To install the dependencies needed to build and host the documentation site locally, run:
+---
+
+## 1. Configure environment
+
+From the repository root:
+
 ```bash
-pip install -r requirements-docs.txt
+cp deploy/.env.example deploy/.env
 ```
 
----
+Edit `deploy/.env` and set at least:
 
-## 2. Setup and Configuration
+```env
+JOERN_SERVER_AUTH_PASSWORD=your-secure-password
+```
 
-1. **Clone the Repository**:
-   Navigate to your local repository clone.
-
-2. **Initialize Environment Variables**:
-   Copy the example environment file:
-   ```bash
-   cp deploy/.env.example deploy/.env
-   ```
-
-3. **Configure Authentication**:
-   Open `deploy/.env` and configure your credentials. Crucially, set the server password:
-   ```env
-   JOERN_SERVER_AUTH_PASSWORD=your-secure-password
-   ```
+Leave username empty to disable auth in dev, or set `JOERN_SERVER_AUTH_USERNAME` and password for Basic auth.
 
 ---
 
-## 3. Run the Server
+## 2. Start the dev profile
 
-Start the Joern Server using the **dev** profile (a single-replica container setup suitable for local exploration):
+Single replica, port 8080 published on the host:
 
 ```bash
 docker compose -f deploy/compose.dev.yml up -d
 ```
 
-Verify that the proxy container is running and healthy:
-
+Check that the server is healthy:
 ```bash
 docker compose -f deploy/compose.dev.yml ps
+curl -s http://127.0.0.1:8080/health | jq .
+
+>> {
+>>   "ok": true,
+>>   "joern_ok": true,
+>>   "latency_ms": 42
+>> }
 ```
 
 ---
 
-## 4. Verify Server Health
-
-Test the server's HTTP endpoints. Send a request to `/health`:
-
-```bash
-curl -s http://127.0.0.1:8080/health
-```
-
-**Expected Response**:
-```json
-{"ok": true}
-```
-
----
-
-## 5. Your First Analysis
-
-Let's parse a simple C code snippet and run a query against it.
-
-### Step A: Parse a Code Snippet
-
-Use the `POST /parse` endpoint to upload and compile a C source snippet into a Code Property Graph (CPG):
+## 3. Parse a code snippet
 
 ```bash
 curl -s -X POST http://127.0.0.1:8080/parse \
   -H 'Content-Type: application/json' \
   -d '{
     "sample_id": "hello-world",
-    "source_code": "int main() { printf(\"Hello World!\\n\"); return 0; }",
+    "source_code": "int main() { return 0; }",
     "language": "c",
     "overwrite": true
-  }'
+  }' | jq .
 ```
 
-This returns compilation metadata indicating the CPG was built successfully:
-```json
-{
-  "ok": true,
-  "cpg_path": "/workspace/cpg-out/hello-world",
-  "source_hash": "...",
-  "cache_hit": false
-}
-```
-
-### Step B: Run a Query
-
-Now, initialize a query session with a unique header `X-Session-Id` and execute a **CPGQL** query to fetch the methods parsed in the CPG:
-
-1. **Load the CPG** into your session:
-   ```bash
-   curl -s -X POST http://127.0.0.1:8080/query-sync \
-     -H 'Content-Type: application/json' \
-     -H 'X-Session-Id: my-first-session' \
-     -d '{"query": "importCpg(\"/workspace/cpg-out/hello-world\")"}'
-   ```
-
-2. **Query the AST** to retrieve all method names:
-   ```bash
-   curl -s -X POST http://127.0.0.1:8080/query-sync \
-     -H 'Content-Type: application/json' \
-     -H 'X-Session-Id: my-first-session' \
-     -d '{"query": "cpg.method.name.l"}'
-   ```
-
-   **Expected Output**:
-   ```json
-   {
-     "success": true,
-     "stdout": "List(main, printf)",
-     "stderr": "",
-     "latency_ms": 12.3
-   }
-   ```
 
 ---
 
-## Next Steps
-- Learn how the request flow works in the [Architecture Guide](ARCHITECTURE.md).
-- Dive deep into multi-file repository parsing and advanced session queries in the [Query Guide](query_guide.md).
-- Learn how to scale up your deployment behind HAProxy in the [Deployment Guide](deploy.md).
+## 4. Import and query
+
+Use two headers:
+
+- `X-Affinity-Key` — same as `sample_id` (routes to the correct replica in scale mode)
+- `X-Session-Id` — your agent or run id (logging)
+
+**Import the CPG:**
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/query-sync \
+  -H 'Content-Type: application/json' \
+  -H 'X-Affinity-Key: hello-world' \
+  -H 'X-Session-Id: my-agent-run-1' \
+  -d '{"query": "importCpg(\"/workspace/cpg-out/hello-world\")"}' | jq .
+```
+
+**Query methods:**
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/query-sync \
+  -H 'Content-Type: application/json' \
+  -H 'X-Affinity-Key: hello-world' \
+  -H 'X-Session-Id: my-agent-run-1' \
+  -d '{"query": "cpg.method.name.l"}' | jq .
+```
+
+---
+
+## 5. Cleanup
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/cleanup \
+  -H 'Content-Type: application/json' \
+  -H 'X-Affinity-Key: hello-world' \
+  -d '{"sample_id": "hello-world"}' | jq .
+```
+
+---
+
+## Python client
+
+```python
+from joern_server.client import JoernHTTPQueryExecutor
+
+with JoernHTTPQueryExecutor(
+    "http://127.0.0.1:8080",
+    session_id="my-agent-run-1",
+    affinity_key="hello-world",
+    reuse_base=True,
+) as ex:
+    ex.parse_source(
+        sample_id="hello-world",
+        source_code="int main() { return 0; }",
+        language="c",
+        overwrite=True,
+    )
+    ex.execute('importCpg("/workspace/cpg-out/hello-world")')
+    print(ex.execute("cpg.method.name.l"))
+    ex.cleanup("hello-world")
+```
+
+---
+
+## Scaled deployment
+
+For multiple agents in parallel:
+
+```bash
+docker compose -f deploy/compose.scale.yml up -d --scale joern=10
+```
+
+Clients still use `http://127.0.0.1:8080` (HAProxy VIP). See [Deployment](deploy.md).
+
+---
+
+## Next steps
+
+- [Architecture](ARCHITECTURE.md) — how components fit together
+- [Query guide](query_guide.md) — repo ingest, graph endpoints, CPGQL patterns
+- [Deployment](deploy.md) — production configuration and monitoring
+- [Developer guide](developer_guide.md) — contributing and extending the proxy

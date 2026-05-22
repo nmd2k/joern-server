@@ -1,84 +1,82 @@
-# Joern Server Documentation Portal
+# Joern Server
 
-Welcome to the documentation portal for **Joern Server**, the HTTP proxy and deployment stack hosting [Joern](https://joern.io/) Code Property Graph (CPG) analysis.
+HTTP proxy and Docker deployment for [Joern](https://joern.io/) Code Property Graph (CPG) analysis. Remote clients send **CPGQL** to port **8080**; the proxy handles parsing, session affinity, and optional horizontal scaling behind HAProxy.
 
-This platform allows LLM agents and remote clients to perform automated code analysis and querying using the **CPGQL** language on the default port **8080**.
-
----
-
-## Quick Navigation
-
-<div class="grid cards" markdown>
-
--   **[:octicons-workflow-24: Architecture](ARCHITECTURE.md)**
-
-    ---
-
-    Understand the HTTP-first request flow, session isolation, and on-disk storage layouts.
-
--   **[:octicons-terminal-24: Query Guide](query_guide.md)**
-
-    ---
-
-    Explore code examples for parsing single snippets, NDJSON repositories, and querying sessions.
-
--   **[:octicons-server-24: Deployment](deploy.md)**
-
-    ---
-
-    Guides for scaling up Joern Server behind HAProxy in production environments.
-
--   **[:octicons-beaker-24: Testing Guide](testing.md)**
-
-    ---
-
-    Learn how to run unit, integration, and load/stress tests for the proxy.
-
-</div>
+This documentation describes the **current repository state** for operators, integrators, and coding agents extending the project.
 
 ---
 
-## Core Architecture Overview
+## Documentation map
+
+| Document | Audience | Contents |
+|----------|----------|----------|
+| [Architecture](ARCHITECTURE.md) | Everyone | Components, request flow, headers, storage, scaling |
+| [Getting started](getting_started.md) | New users | Local dev setup, first parse + query |
+| [Query guide](query_guide.md) | Client authors | Parse modes, CPGQL, headers, cleanup |
+| [Deployment](deploy.md) | Operators | Compose profiles, HAProxy, monitoring, env vars |
+| [Testing](testing.md) | Contributors | pytest layout, live and stress tests |
+| [Developer guide](developer_guide.md) | Coding agents | Repo layout, conventions, safe change workflow |
+| [API reference](api_reference.md) | Integrators | HTTP endpoints + Python client/proxy reference |
+
+---
+
+## Repository layout (high level)
 
 ```
-HTTP client (agent, CI, playground)
-      │
-      ▼
-joern_server/proxy.py  (:8080)
-  • POST /parse              — single-file / snippet
-  • POST /parse/repo         — repo via JSONL or upload_id
-  • POST /query-sync         — CPGQL (importCpg, cpg.*, …)
-  • POST /graph/*            — CFG, DDG, PDG, AST
-  • POST /cleanup, GET /health, GET /version
-      │
-      ▼
-Joern HTTP REPL (in-container, :8081)
-      │
-      ▼
-/workspace/cpg-out/<sample_id>
+joern-server/
+├── joern_server/          # Python HTTP proxy + client
+│   ├── proxy.py           # Main API server (:8080)
+│   ├── client.py          # JoernHTTPQueryExecutor
+│   └── metrics.py         # Prometheus text metrics
+├── docker/                # Unified image, entrypoint, healthcheck
+├── deploy/                # compose.dev.yml, compose.scale.yml, haproxy.cfg
+├── tests/                 # unit, integration, stress
+├── playground-server/     # Optional web UI (Node)
+└── docs/                  # This site (MkDocs)
 ```
 
 ---
 
-## Quick Start (Local Run)
+## Agent quick checklist
 
-To run a local development instance of Joern Server:
+When integrating or modifying this repo:
 
-1. **Configure Environment Variables**:
-   ```bash
-   cp deploy/.env.example deploy/.env
-   # Edit deploy/.env and set JOERN_SERVER_AUTH_PASSWORD
-   ```
+1. **Parse** is stateless — `POST /parse` or `/parse/repo` writes to shared `cpg-out`.
+2. **Query** is stateful — use `X-Affinity-Key: <sample_id>` on every `/query-sync` after `importCpg`.
+3. **Logging** — use `X-Session-Id` for the agent run (separate from affinity).
+4. **Scaled deploy** — one VIP (`:8080`); HAProxy sticks on `X-Affinity-Key`.
+5. **Cleanup** — `POST /cleanup` removes disk CPG and in-memory affinity state on that replica.
+6. **Health** — `GET /health` probes Joern; returns **503** if the REPL is unreachable.
+7. **Docker** — proxy runs as `python3 /app/joern_server/proxy.py` with `PYTHONPATH=/app` (see [Developer guide](developer_guide.md)).
 
-2. **Start Dev Profile**:
-   ```bash
-   docker compose -f deploy/compose.dev.yml up -d
-   # HTTP API will be exposed on: http://127.0.0.1:8080
-   ```
+---
 
-3. **Check Health**:
-   ```bash
-   curl -s http://127.0.0.1:8080/health
-   ```
+## Quick start
 
-For detailed multi-replica scaling options, see the [Deployment Guide](deploy.md).
+```bash
+cp deploy/.env.example deploy/.env
+# set JOERN_SERVER_AUTH_PASSWORD in deploy/.env
+
+docker compose -f deploy/compose.dev.yml up -d
+curl -s http://127.0.0.1:8080/health | jq .
+```
+
+Scaled (10 replicas example):
+
+```bash
+docker compose -f deploy/compose.scale.yml up -d --scale joern=10
+```
+
+Build docs locally:
+
+```bash
+pip install -r requirements-docs.txt
+mkdocs serve
+```
+
+---
+
+## External references
+
+- [Joern documentation](https://docs.joern.io/)
+- [deploy/README.md](../deploy/README.md) — short deploy pointer
