@@ -33,7 +33,7 @@ import httpx
 import pytest
 
 from joern_server.client import JoernHTTPQueryExecutor
-from joern_server.proxy import _safe_sample_id
+from joern_server.cpg.paths import safe_sample_id
 
 LIVE_URL = os.environ.get("NEURALATLAS_LIVE_JOERN_URL", "http://127.0.0.1:8080").rstrip("/")
 
@@ -199,7 +199,7 @@ def test_live_executor_session_id_under_stress(require_live_joern: str) -> None:
                 assert pr.get("ok") is True, pr
                 cpg_path = pr.get("cpg_path")
                 assert isinstance(cpg_path, str) and cpg_path, pr
-                safe = _safe_sample_id(sample_id)
+                safe = safe_sample_id(sample_id)
                 assert safe in cpg_path or cpg_path.rstrip("/").endswith(safe), (cpg_path, safe)
 
                 # Use importCpg (Joern console) so `cpg.*` traversals work on this stack.

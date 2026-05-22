@@ -4,7 +4,7 @@ Python HTTP proxy and client for Joern Server. **Full documentation:** [`docs/in
 
 | Module | Role |
 |--------|------|
-| `proxy.py` | HTTP API server (:8080) |
+| `app.py` | FastAPI application (uvicorn entry: `joern_server.app:app`) |
 | `client.py` | `JoernHTTPQueryExecutor` |
 | `metrics.py` | Prometheus metrics for `/metrics` |
 

@@ -125,7 +125,7 @@ start_proxy() {
   export JOERN_INTERNAL_PORT="$JOERN_INTERNAL_PORT"
   export JOERN_INTERNAL_HOST="$JOERN_INTERNAL_HOST"
   export PYTHONPATH="/app:${PYTHONPATH:-}"
-  python3 /app/joern_server/proxy.py &
+  uvicorn joern_server.app:app --host "${PROXY_HOST:-0.0.0.0}" --port "${PROXY_PORT}" &
   PROXY_PID="$!"
 
   if ! kill -0 "$PROXY_PID" >/dev/null 2>&1; then

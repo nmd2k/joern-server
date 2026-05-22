@@ -98,6 +98,48 @@
           "legendFormat": "errors/sec"
         }
       ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "id": 8,
+      "title": "Parse request rate by status",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(joern_proxy_parse_requests_total[5m]) * on(instance) group_left() up{job=\"joern-proxy\"}) by (status)",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "id": 9,
+      "title": "Parse latency (avg from sum/count)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(joern_proxy_parse_duration_seconds_sum[5m]) * on(instance) group_left() up{job=\"joern-proxy\"}) / sum(rate(joern_proxy_parse_duration_seconds_count[5m]) * on(instance) group_left() up{job=\"joern-proxy\"})",
+          "legendFormat": "avg"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "id": 10,
+      "title": "Cleanup request rate by status",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(joern_proxy_cleanup_requests_total[5m]) * on(instance) group_left() up{job=\"joern-proxy\"}) by (status, archived)",
+          "legendFormat": "{{status}} archived={{archived}}"
+        }
+      ]
     }
   ],
   "refresh": "15s",
@@ -108,5 +150,5 @@
   "timezone": "browser",
   "title": "Joern Server",
   "uid": "joern-server-main",
-  "version": 2
+  "version": 3
 }

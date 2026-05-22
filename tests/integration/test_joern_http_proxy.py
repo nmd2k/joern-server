@@ -101,7 +101,16 @@ def start_proxy_server(*, proxy_port: int, internal_port: int) -> subprocess.Pop
     env["JOERN_INTERNAL_PORT"] = str(internal_port)
     env["PYTHONPATH"] = REPO_ROOT
     proc = subprocess.Popen(
-        [os.environ.get("PYTHON_BIN", "python"), "-m", "joern_server.proxy"],
+        [
+            os.environ.get("PYTHON_BIN", "python"),
+            "-m",
+            "uvicorn",
+            "joern_server.app:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(proxy_port),
+        ],
         cwd=REPO_ROOT,
         env=env,
         stdout=subprocess.PIPE,

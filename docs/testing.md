@@ -23,7 +23,8 @@ tests/
 │   └── test_haproxy_stickiness.py     # Live VIP (opt-in)
 └── stress/
     ├── test_joern_live_stress.py
-    └── test_session_lifecycle.py      # 250-session endurance (opt-in)
+    ├── test_session_lifecycle.py      # 250-session endurance (opt-in)
+    └── test_primevul_stress.py        # PrimeVul JSONL parse + query (opt-in)
 ```
 
 Markers (`pytest.ini`):
@@ -58,6 +59,12 @@ NEURALATLAS_RUN_HAPROXY_TESTS=1 \
 NEURALATLAS_STRESS_LIFECYCLE_SESSIONS=250 \
 NEURALATLAS_STRESS_LIFECYCLE_BATCH=8 \
   pytest tests/stress/test_session_lifecycle.py -m stress -v
+
+# PrimeVul JSONL: 200 samples, 5 threads, 4x cpg.method.name.l (2s apart)
+NEURALATLAS_PRIMEVUL_JSONL=/datadrive/data/raw/primevul/primevul_test_paired.jsonl \
+NEURALATLAS_STRESS_PRIMEVUL_LIMIT=200 \
+NEURALATLAS_STRESS_PRIMEVUL_WORKERS=5 \
+  pytest tests/stress/test_primevul_stress.py -m stress -v -s
 ```
 
 ---

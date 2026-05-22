@@ -1,6 +1,6 @@
 # Architecture
 
-Joern Server exposes Joern as an **HTTP API** on port **8080**. Each container runs a **Python proxy** in front of a **single Joern REPL** (JVM). Multi-replica deployments use **HAProxy** with sticky routing so each `sample_id` stays on one replica.
+Joern Server exposes Joern as an **HTTP API** on port **8080**. Each container runs a **FastAPI** service (`joern_server.app:app` via uvicorn) in front of a **single Joern REPL** (JVM). Multi-replica deployments use **HAProxy** with sticky routing so each `sample_id` stays on one replica.
 
 ---
 
@@ -18,12 +18,12 @@ flowchart TB
   end
 
   subgraph container [Each joern container]
-    Proxy[joern_server/proxy.py :8080]
+    API[joern_server FastAPI :8080]
     Sem[repl_semaphore]
     Joern[Joern --server :18080]
-    Affinity["_affinity_cpg_path"]
-    Proxy --> Sem --> Joern
-    Proxy --> Affinity
+    Affinity[AppState affinity map]
+    API --> Sem --> Joern
+    API --> Affinity
   end
 
   subgraph volumes [Shared Docker volumes]
@@ -33,9 +33,9 @@ flowchart TB
 
   Agent --> HA
   PG --> HA
-  HA --> Proxy
-  Proxy --> Out
-  Proxy --> Arc
+  HA --> API
+  API --> Out
+  API --> Arc
   Joern --> Out
 ```
 
@@ -52,13 +52,13 @@ Started by `docker/unified-entrypoint.sh`:
 
 1. Start Joern `--server` on `JOERN_INTERNAL_PORT` (default **18080**).
 2. Wait until Joern accepts `POST /query-sync` with `val _health = 1`.
-3. Start `python3 /app/joern_server/proxy.py` on **8080** (`PYTHONPATH=/app`).
-4. Supervise: if Joern exits, restart Joern and proxy (bounded by `JOERN_MAX_RESTARTS`).
+3. Start **uvicorn** `joern_server.app:app` on **8080** (`PYTHONPATH=/app`).
+4. Supervise: if Joern exits, restart Joern and the HTTP service (bounded by `JOERN_MAX_RESTARTS`).
 
 | Process | Port | Role |
 |---------|------|------|
 | Joern JVM | 18080 (internal) | CPGQL REPL; one active CPG in memory |
-| Python proxy | 8080 (published via HAProxy in scale) | HTTP API, parse subprocess, affinity map |
+| FastAPI (uvicorn) | 8080 (published via HAProxy in scale) | HTTP API, parse subprocess, `AppState` (affinity, cache, registry) |
 
 Clients never connect to 18080 directly.
 
@@ -70,7 +70,7 @@ Clients never connect to 18080 directly.
 sequenceDiagram
   participant C as Client
   participant H as HAProxy
-  participant P as proxy.py
+  participant P as joern_server API
   participant J as Joern REPL
 
   C->>H: POST /query-sync\nX-Affinity-Key: sample_id
@@ -87,7 +87,7 @@ sequenceDiagram
 |------|----------|
 | Cache | Optional LRU keyed by `{affinity_key}:{md5(query)}`; off when `QUERY_CACHE_MAX_SIZE=0` |
 | Semaphore | `repl_semaphore(1)` — one REPL operation at a time per container |
-| Activation | If affinity key has a stored `importCpg` path, proxy re-imports before forwarding |
+| Activation | If affinity key has a stored `importCpg` path, API re-imports before forwarding |
 | Errors | Joern `success=false` at HTTP 200 → **422**; timeout → **504**; upstream down → **502** with `code` |
 
 ---
@@ -194,6 +194,27 @@ Optional monitoring: `deploy/compose.monitoring.yml` (Prometheus + Grafana).
 | POST | `/cleanup` | No (clears affinity) |
 
 Details: [API reference](api_reference.md), [Query guide](query_guide.md).
+
+---
+
+## Code layout
+
+| Package | Responsibility |
+|---------|----------------|
+| `joern_server/app.py` | FastAPI app, lifespan, router registration |
+| `joern_server/config.py` | `Settings` loaded from environment |
+| `joern_server/state.py` | `AppState` (affinity, cache, registry, semaphore, metrics) |
+| `joern_server/api/routers/` | HTTP routes (thin handlers) |
+| `joern_server/parse/` | Single/repo parse, language aliases, subprocess runner |
+| `joern_server/graph/` | CFG/DFG/DDG/PDG/AST extraction |
+| `joern_server/cpg/` | Registry, storage, path helpers |
+| `joern_server/cache/` | LRU query cache |
+| `joern_server/session/` | Affinity map, REPL lock |
+| `joern_server/upstream/` | httpx calls to Joern `:18080` |
+| `joern_server/lifecycle/` | Cleanup orchestration |
+| `joern_server/client.py` | `JoernHTTPQueryExecutor` for callers |
+
+See [Developer guide — Package layout](developer_guide.md#package-layout) for the full tree.
 
 ---
 

@@ -1,0 +1,20 @@
+import re
+from pathlib import Path
+from typing import Optional
+
+
+def sample_id_from_cpg_path(path: str) -> Optional[str]:
+    """Extract sample_id from /workspace/cpg-out/<sample_id> style paths."""
+    p = (path or "").strip().rstrip("/")
+    if not p:
+        return None
+    parts = Path(p).parts
+    for i, part in enumerate(parts):
+        if part == "cpg-out" and i + 1 < len(parts):
+            return safe_sample_id(parts[i + 1])
+    return safe_sample_id(Path(p).name) if p else None
+
+
+def safe_sample_id(raw: str) -> str:
+    safe = re.sub(r"[^a-zA-Z0-9._-]", "_", raw.strip())
+    return safe or "sample"

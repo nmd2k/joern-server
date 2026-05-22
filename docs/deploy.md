@@ -123,7 +123,20 @@ Set `DOCKER_GID` in `deploy/.env` to the host docker group id (`stat -c %g /var/
 
 **Avoid:** `docker compose -f deploy/compose.monitoring.yml up -d` while Joern is running under project `deploy` — Compose treats `joern` / `joern-haproxy` as removed from the project and stops them. Use `--project-name joern-monitoring` instead.
 
-Pre-provisioned dashboard: **Joern Server** (query rate, errors, `joern_proxy_joern_up`, affinity map size). Panels filter with `up{job="joern-proxy"}` so stopped replicas from an earlier `--scale` do not appear as still UP.
+Pre-provisioned dashboard: **Joern Server** (query rate, parse rate/latency, cleanup rate, errors, `joern_proxy_joern_up`, affinity map size). Panels filter with `up{job="joern-proxy"}` so stopped replicas from an earlier `--scale` do not appear as still UP.
+
+### Prometheus metrics (`joern_proxy_*`)
+
+Scraped from `GET /metrics` on each replica. Counter names are exported with a `_total` suffix; histograms export `_sum` and `_count` pairs.
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `joern_proxy_parse_requests_total` | Counter | `status`, `language`, `cache_hit` | Parse requests (`POST /parse`, `/parse/repo`, `/parse/repo/upload`); `status` is the HTTP status code; `cache_hit` is `true`/`false` |
+| `joern_proxy_parse_duration_seconds_sum` | Histogram sum | — | Total parse wall time (seconds) |
+| `joern_proxy_parse_duration_seconds_count` | Histogram count | — | Number of parse observations (use with `_sum` for average latency) |
+| `joern_proxy_cleanup_requests_total` | Counter | `status`, `archived` | Cleanup requests (`POST /cleanup`); `archived` is `true` when the request archived the CPG instead of deleting it |
+
+Existing query-sync metrics (`joern_proxy_query_sync_requests_total`, `joern_proxy_query_sync_duration_seconds_*`) are unchanged.
 
 ---
 

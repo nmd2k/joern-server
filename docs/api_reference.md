@@ -169,9 +169,22 @@ Also clears in-memory affinity state for that `sample_id` on the handling replic
 
 ::: joern_server.client
 
-### Proxy
+### Application
 
-::: joern_server.proxy
+::: joern_server.app
+
+### HTTP routers
+
+Routers are registered in `joern_server.app.create_app()`:
+
+| Module | Routes |
+|--------|--------|
+| `joern_server.api.routers.health` | `GET /health`, `/version`, `/metrics`, `/cache-metrics` |
+| `joern_server.api.routers.query` | `POST /query-sync` |
+| `joern_server.api.routers.parse` | `POST /parse` |
+| `joern_server.api.routers.parse_repo` | `POST /parse/repo`, `/parse/repo/upload` |
+| `joern_server.api.routers.graph` | `POST /graph/cfg`, `/graph/dfg`, `/graph/ddg`, `/graph/pdg`, `/graph/ast` |
+| `joern_server.api.routers.cleanup` | `POST /cleanup` |
 
 ---
 

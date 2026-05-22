@@ -19,7 +19,7 @@ For one file or a small fragment:
 }
 ```
 
-Language aliases (e.g. `python` → `pythonsrc`) are normalized in the proxy. See `joern_server/proxy.py` `_LANGUAGE_ALIASES`.
+Language aliases (e.g. `python` → `pythonsrc`) are normalized in `joern_server.parse.language` (`_LANGUAGE_ALIASES`).
 
 ### Repository — `POST /parse/repo` (NDJSON)
 

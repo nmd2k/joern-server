@@ -1,6 +1,6 @@
 # Joern Server
 
-HTTP proxy and Docker deployment for [Joern](https://joern.io/) Code Property Graph (CPG) analysis. Remote clients send **CPGQL** to port **8080**; the proxy handles parsing, session affinity, and optional horizontal scaling behind HAProxy.
+HTTP API and Docker deployment for [Joern](https://joern.io/) Code Property Graph (CPG) analysis. Remote clients send **CPGQL** to port **8080**; the FastAPI service handles parsing, session affinity, and optional horizontal scaling behind HAProxy.
 
 This documentation describes the **current repository state** for operators, integrators, and coding agents extending the project.
 
@@ -16,7 +16,7 @@ This documentation describes the **current repository state** for operators, int
 | [Deployment](deploy.md) | Operators | Compose profiles, HAProxy, monitoring, env vars |
 | [Testing](testing.md) | Contributors | pytest layout, live and stress tests |
 | [Developer guide](developer_guide.md) | Coding agents | Repo layout, conventions, safe change workflow |
-| [API reference](api_reference.md) | Integrators | HTTP endpoints + Python client/proxy reference |
+| [API reference](api_reference.md) | Integrators | HTTP endpoints + Python client reference |
 
 ---
 
@@ -24,15 +24,32 @@ This documentation describes the **current repository state** for operators, int
 
 ```
 joern-server/
-├── joern_server/          # Python HTTP proxy + client
-│   ├── proxy.py           # Main API server (:8080)
-│   ├── client.py          # JoernHTTPQueryExecutor
-│   └── metrics.py         # Prometheus text metrics
-├── docker/                # Unified image, entrypoint, healthcheck
-├── deploy/                # compose.dev.yml, compose.scale.yml, haproxy.cfg
-├── tests/                 # unit, integration, stress
-├── playground-server/     # Optional web UI (Node)
-└── docs/                  # This site (MkDocs)
+├── joern_server/              # Python FastAPI HTTP API + client
+│   ├── app.py                 # FastAPI entry (uvicorn joern_server.app:app)
+│   ├── config.py              # Settings from environment
+│   ├── state.py               # AppState (affinity, cache, registry)
+│   ├── client.py              # JoernHTTPQueryExecutor
+│   ├── metrics.py             # Prometheus text metrics
+│   ├── api/
+│   │   ├── deps.py
+│   │   └── routers/           # health, query, parse, parse_repo, graph, cleanup
+│   ├── parse/                 # Parse pipeline + language aliases
+│   ├── graph/                 # CFG/DFG/DDG/PDG/AST
+│   ├── cpg/                   # Registry and storage
+│   ├── cache/                 # LRU query cache
+│   ├── session/               # Affinity and REPL lock
+│   ├── upstream/              # httpx client to Joern :18080
+│   ├── lifecycle/             # Cleanup helpers
+│   └── util/                  # Shared helpers
+├── docker/                    # Unified image, entrypoint, healthcheck
+├── deploy/                    # compose.dev.yml, compose.scale.yml, haproxy.cfg
+├── tests/
+│   ├── helpers/app.py         # TestClient harness
+│   ├── unit/
+│   ├── integration/
+│   └── stress/
+├── playground-server/         # Optional web UI (Node)
+└── docs/                      # This site (MkDocs)
 ```
 
 ---
@@ -47,7 +64,7 @@ When integrating or modifying this repo:
 4. **Scaled deploy** — one VIP (`:8080`); HAProxy sticks on `X-Affinity-Key`.
 5. **Cleanup** — `POST /cleanup` removes disk CPG and in-memory affinity state on that replica.
 6. **Health** — `GET /health` probes Joern; returns **503** if the REPL is unreachable.
-7. **Docker** — proxy runs as `python3 /app/joern_server/proxy.py` with `PYTHONPATH=/app` (see [Developer guide](developer_guide.md)).
+7. **Docker** — API runs via uvicorn `joern_server.app:app` with `PYTHONPATH=/app` (see [Developer guide](developer_guide.md)).
 
 ---
 

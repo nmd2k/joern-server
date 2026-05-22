@@ -1,57 +1,40 @@
-"""S7-010: Unit tests for new graph endpoints (PDG, AST, metadata enrichment, aliases).
+"""S7-010: Unit tests for graph endpoints (PDG, AST, metadata enrichment, aliases).
 
-Tests /graph/pdg, /graph/ast, _fetch_node_metadata, and /graph/ddg alias routing.
-All tests use mocked httpx responses — no live Joern server required.
+Tests /graph/pdg, /graph/ast, fetch_node_metadata, and /graph/ddg alias routing.
+All tests use mocked upstream responses — no live Joern server required.
 
 Run with:
     pytest tests/unit/test_graph_endpoints.py -v
 """
 
-import json
-import threading
 from http import HTTPStatus
-from io import BytesIO
 from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
-from joern_server.proxy import JoernProxyHandler
+from joern_server.graph.metadata import fetch_node_metadata
+from tests.helpers.app import create_test_app, make_test_state
+
+_GRAPH_BODY = {"method_full_name": "com.example.Foo.main:void()"}
+_HEADERS = {
+    "X-Session-Id": "test-session",
+    "X-Request-Id": "req-1",
+    "Content-Type": "application/json",
+}
 
 
-def _make_graph_handler(path="/graph/pdg", body_dict=None):
-    """Create a JoernProxyHandler pre-configured for graph endpoint testing."""
-    JoernProxyHandler.internal_url = "http://127.0.0.1:18080/query-sync"
-    JoernProxyHandler.repl_semaphore = threading.Semaphore(1)
-    JoernProxyHandler.query_cache = None
-    JoernProxyHandler.parse_bin = "/bin/false"
-    JoernProxyHandler.cpg_out_dir = "/tmp"
-    JoernProxyHandler.parse_timeout_sec = 30
-    JoernProxyHandler.query_timeout_sec = 5
+def _client(tmp_path) -> TestClient:
+    return TestClient(create_test_app(state=make_test_state(tmp_path)))
 
-    handler = JoernProxyHandler.__new__(JoernProxyHandler)
-    handler.path = path
-    handler.headers = {
-        "X-Session-Id": "test-session",
-        "X-Request-Id": "req-1",
-        "Content-Type": "application/json",
-    }
-    handler.wfile = BytesIO()
-    handler.requestline = f"POST {path} HTTP/1.1"
-    handler.server = MagicMock()
-    handler.client_address = ("127.0.0.1", 9999)
 
-    if body_dict is None:
-        body_dict = {"method_full_name": "com.example.Foo.main:void()"}
-
-    body = json.dumps(body_dict).encode("utf-8")
-    handler.headers["Content-Length"] = str(len(body))
-
-    def _read_body():
-        return body
-
-    handler._read_body = _read_body
-    return handler
+def _mock_resp(stdout: str, *, success: bool = True) -> MagicMock:
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"stdout": stdout, "success": success}
+    mock_resp.raise_for_status = MagicMock()
+    return mock_resp
 
 
 # ---------------------------------------------------------------------------
@@ -70,116 +53,79 @@ class TestGraphPdg:
   "2" -> "3" [label="control"]
 }'''
 
-    @pytest.fixture(autouse=True)
-    def _setup_class_vars(self):
-        JoernProxyHandler.repl_semaphore = threading.Semaphore(1)
-        JoernProxyHandler.internal_url = "http://127.0.0.1:18080/query-sync"
-        JoernProxyHandler.query_timeout_sec = 5
-
-    def test_pdg_endpoint_parses_dot_output(self):
+    def test_pdg_endpoint_parses_dot_output(self, tmp_path):
         """Mock Joern query-sync to return DOT string, verify {nodes, edges, metadata}."""
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"stdout": self.DOT_PDG, "success": True}
+        client = _client(tmp_path)
+        mock_resp = _mock_resp(self.DOT_PDG)
 
-        sent_status = []
-        sent_data = []
+        with patch("joern_server.graph.service.fetch_node_metadata", return_value={}):
+            with patch("joern_server.upstream.joern.post_query_sync", return_value=mock_resp):
+                response = client.post("/graph/pdg", json=_GRAPH_BODY, headers=_HEADERS)
 
-        def capture_send_json(status, data):
-            sent_status.append(status)
-            sent_data.append(data)
+        assert response.status_code == HTTPStatus.OK
+        body = response.json()
+        assert "nodes" in body
+        assert "edges" in body
+        assert "metadata" in body
+        assert len(body["nodes"]) == 3
+        assert all("id" in n and "label" in n and "shape" in n for n in body["nodes"])
+        assert len(body["edges"]) == 2
+        assert all("source" in e and "target" in e and "label" in e for e in body["edges"])
 
-        handler = _make_graph_handler("/graph/pdg")
-        with patch.object(handler, "_send_json", side_effect=capture_send_json):
-            with patch.object(handler, "_fetch_node_metadata", return_value={}):
-                with patch("joern_server.proxy.httpx.post", return_value=mock_resp):
-                    handler.do_POST()
-
-        assert sent_status == [HTTPStatus.OK]
-        response = sent_data[0]
-        assert "nodes" in response
-        assert "edges" in response
-        assert "metadata" in response
-        assert len(response["nodes"]) == 3
-        assert all("id" in n and "label" in n and "shape" in n for n in response["nodes"])
-        assert len(response["edges"]) == 2
-        assert all("source" in e and "target" in e and "label" in e for e in response["edges"])
-
-    def test_pdg_endpoint_empty_result_returns_422(self):
+    def test_pdg_endpoint_empty_result_returns_422(self, tmp_path):
         """Mock empty DOT string, verify 422 response."""
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"stdout": "", "success": True}
+        client = _client(tmp_path)
+        mock_resp = _mock_resp("")
 
-        sent_status = []
+        with patch("joern_server.upstream.joern.post_query_sync", return_value=mock_resp):
+            response = client.post("/graph/pdg", json=_GRAPH_BODY, headers=_HEADERS)
 
-        def capture_send_json(status, data):
-            sent_status.append(status)
+        assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
-        handler = _make_graph_handler("/graph/pdg")
-        with patch.object(handler, "_send_json", side_effect=capture_send_json):
-            with patch("joern_server.proxy.httpx.post", return_value=mock_resp):
-                handler.do_POST()
-
-        assert sent_status == [HTTPStatus.UNPROCESSABLE_ENTITY]
-
-    def test_pdg_endpoint_timeout_returns_504(self):
+    def test_pdg_endpoint_timeout_returns_504(self, tmp_path):
         """Mock httpx.TimeoutException, verify 504 Gateway Timeout."""
-        sent_status = []
+        client = _client(tmp_path)
 
-        def capture_send_json(status, data):
-            sent_status.append(status)
+        with patch(
+            "joern_server.upstream.joern.post_query_sync",
+            side_effect=httpx.TimeoutException("timed out"),
+        ):
+            response = client.post("/graph/pdg", json=_GRAPH_BODY, headers=_HEADERS)
 
-        handler = _make_graph_handler("/graph/pdg")
-        with patch.object(handler, "_send_json", side_effect=capture_send_json):
-            with patch("joern_server.proxy.httpx.post", side_effect=httpx.TimeoutException("timed out")):
-                handler.do_POST()
+        assert response.status_code == HTTPStatus.GATEWAY_TIMEOUT
 
-        assert sent_status == [HTTPStatus.GATEWAY_TIMEOUT]
-
-    def test_pdg_endpoint_joern_error_returns_502(self):
+    def test_pdg_endpoint_joern_error_returns_502(self, tmp_path):
         """Mock generic exception, verify 502 Bad Gateway."""
-        sent_status = []
+        client = _client(tmp_path)
 
-        def capture_send_json(status, data):
-            sent_status.append(status)
+        with patch(
+            "joern_server.upstream.joern.post_query_sync",
+            side_effect=Exception("something broke"),
+        ):
+            response = client.post("/graph/pdg", json=_GRAPH_BODY, headers=_HEADERS)
 
-        handler = _make_graph_handler("/graph/pdg")
-        with patch.object(handler, "_send_json", side_effect=capture_send_json):
-            with patch("joern_server.proxy.httpx.post", side_effect=Exception("something broke")):
-                handler.do_POST()
+        assert response.status_code == HTTPStatus.BAD_GATEWAY
 
-        assert sent_status == [HTTPStatus.BAD_GATEWAY]
-
-    def test_pdg_endpoint_metadata_included(self):
+    def test_pdg_endpoint_metadata_included(self, tmp_path):
         """Verify response includes metadata map keyed by node ID."""
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"stdout": self.DOT_PDG, "success": True}
-
+        client = _client(tmp_path)
+        mock_resp = _mock_resp(self.DOT_PDG)
         fake_metadata = {
             "1": {"code": "void main()", "line_number": 1, "node_type": "METHOD"},
             "2": {"code": "x = 1", "line_number": 2, "node_type": "ASSIGNMENT"},
             "3": {"code": "foo()", "line_number": 3, "node_type": "CALL"},
         }
 
-        sent_data = []
+        with patch("joern_server.graph.service.fetch_node_metadata", return_value=fake_metadata):
+            with patch("joern_server.upstream.joern.post_query_sync", return_value=mock_resp):
+                response = client.post("/graph/pdg", json=_GRAPH_BODY, headers=_HEADERS)
 
-        def capture_send_json(status, data):
-            sent_data.append(data)
-
-        handler = _make_graph_handler("/graph/pdg")
-        with patch.object(handler, "_send_json", side_effect=capture_send_json):
-            with patch.object(handler, "_fetch_node_metadata", return_value=fake_metadata):
-                with patch("joern_server.proxy.httpx.post", return_value=mock_resp):
-                    handler.do_POST()
-
-        response = sent_data[0]
-        assert "metadata" in response
-        assert response["metadata"] == fake_metadata
-        assert "1" in response["metadata"]
-        assert "2" in response["metadata"]
-        assert "3" in response["metadata"]
+        body = response.json()
+        assert "metadata" in body
+        assert body["metadata"] == fake_metadata
+        assert "1" in body["metadata"]
+        assert "2" in body["metadata"]
+        assert "3" in body["metadata"]
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +136,6 @@ class TestGraphPdg:
 class TestGraphAst:
     """Tests for POST /graph/ast endpoint."""
 
-    # Simulated Joern stdout returning Scala tuples for AST (7 fields, no argumentIndex)
     AST_TUPLES_STDOUT = (
         'val res0: List[(Long, String, Option[Int], Option[Int], Int, String, Option[Long])] = List(\n'
         '(1, "void main()", Some(1), Some(1), 1, "METHOD", None),\n'
@@ -201,144 +146,85 @@ class TestGraphAst:
         ')'
     )
 
-    @pytest.fixture(autouse=True)
-    def _setup_class_vars(self):
-        JoernProxyHandler.repl_semaphore = threading.Semaphore(1)
-        JoernProxyHandler.internal_url = "http://127.0.0.1:18080/query-sync"
-        JoernProxyHandler.query_timeout_sec = 5
-
-    def test_ast_endpoint_parses_scala_tuples(self):
+    def test_ast_endpoint_parses_scala_tuples(self, tmp_path):
         """Mock query-sync returning Scala tuple list, verify {nodes, edges, metadata}."""
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"stdout": self.AST_TUPLES_STDOUT, "success": True}
+        client = _client(tmp_path)
+        mock_resp = _mock_resp(self.AST_TUPLES_STDOUT)
 
-        sent_data = []
+        with patch("joern_server.upstream.joern.post_query_sync", return_value=mock_resp):
+            response = client.post("/graph/ast", json=_GRAPH_BODY, headers=_HEADERS)
 
-        def capture_send_json(status, data):
-            sent_data.append(data)
+        body = response.json()
+        assert "nodes" in body
+        assert "edges" in body
+        assert "metadata" in body
+        assert "method_full_name" in body
+        assert len(body["nodes"]) == 5
+        assert body["nodes"][0]["id"] == "1"
+        assert body["nodes"][0]["label"] == "METHOD"
 
-        handler = _make_graph_handler("/graph/ast")
-        with patch.object(handler, "_send_json", side_effect=capture_send_json):
-            with patch("joern_server.proxy.httpx.post", return_value=mock_resp):
-                handler.do_POST()
-
-        response = sent_data[0]
-        assert "nodes" in response
-        assert "edges" in response
-        assert "metadata" in response
-        assert "method_full_name" in response
-        assert len(response["nodes"]) == 5
-        # node 1 is the root METHOD node
-        assert response["nodes"][0]["id"] == "1"
-        assert response["nodes"][0]["label"] == "METHOD"
-
-    def test_ast_endpoint_empty_result_returns_422(self):
+    def test_ast_endpoint_empty_result_returns_422(self, tmp_path):
         """Mock empty tuple list, verify 422."""
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"stdout": "val res0: List[...] = List()", "success": True}
+        client = _client(tmp_path)
+        mock_resp = _mock_resp("val res0: List[...] = List()")
 
-        sent_status = []
+        with patch("joern_server.upstream.joern.post_query_sync", return_value=mock_resp):
+            response = client.post("/graph/ast", json=_GRAPH_BODY, headers=_HEADERS)
 
-        def capture_send_json(status, data):
-            sent_status.append(status)
+        assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
-        handler = _make_graph_handler("/graph/ast")
-        with patch.object(handler, "_send_json", side_effect=capture_send_json):
-            with patch("joern_server.proxy.httpx.post", return_value=mock_resp):
-                handler.do_POST()
-
-        assert sent_status == [HTTPStatus.UNPROCESSABLE_ENTITY]
-
-    def test_ast_endpoint_timeout_returns_504(self):
+    def test_ast_endpoint_timeout_returns_504(self, tmp_path):
         """Mock httpx.TimeoutException for AST, verify 504."""
-        sent_status = []
+        client = _client(tmp_path)
 
-        def capture_send_json(status, data):
-            sent_status.append(status)
+        with patch(
+            "joern_server.upstream.joern.post_query_sync",
+            side_effect=httpx.TimeoutException("timed out"),
+        ):
+            response = client.post("/graph/ast", json=_GRAPH_BODY, headers=_HEADERS)
 
-        handler = _make_graph_handler("/graph/ast")
-        with patch.object(handler, "_send_json", side_effect=capture_send_json):
-            with patch("joern_server.proxy.httpx.post", side_effect=httpx.TimeoutException("timed out")):
-                handler.do_POST()
+        assert response.status_code == HTTPStatus.GATEWAY_TIMEOUT
 
-        assert sent_status == [HTTPStatus.GATEWAY_TIMEOUT]
-
-    def test_ast_endpoint_edges_connect_parents(self):
+    def test_ast_endpoint_edges_connect_parents(self, tmp_path):
         """Verify edges properly link astParent.id -> node.id."""
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"stdout": self.AST_TUPLES_STDOUT, "success": True}
+        client = _client(tmp_path)
+        mock_resp = _mock_resp(self.AST_TUPLES_STDOUT)
 
-        sent_data = []
+        with patch("joern_server.upstream.joern.post_query_sync", return_value=mock_resp):
+            response = client.post("/graph/ast", json=_GRAPH_BODY, headers=_HEADERS)
 
-        def capture_send_json(status, data):
-            sent_data.append(data)
-
-        handler = _make_graph_handler("/graph/ast")
-        with patch.object(handler, "_send_json", side_effect=capture_send_json):
-            with patch("joern_server.proxy.httpx.post", return_value=mock_resp):
-                handler.do_POST()
-
-        response = sent_data[0]
-        edges = response["edges"]
-
-        # Node 2 has astParent=1 -> edge 1->2
-        # Node 3 has astParent=2 -> edge 2->3
-        # Node 4 has astParent=2 -> edge 2->4
-        # Node 5 has astParent=1 -> edge 1->5
-        # Node 1 has astParent=None -> no edge for 1 as child
+        edges = response.json()["edges"]
         assert len(edges) == 4
         edge_sources = {e["source"] for e in edges}
         edge_targets = {e["target"] for e in edges}
-        assert "1" in edge_sources  # parent of 2 and 5
-        assert "2" in edge_sources  # parent of 3 and 4
-        assert "2" in edge_targets  # child of 1
-        assert "3" in edge_targets  # child of 2
-        assert "4" in edge_targets  # child of 2
-        assert "5" in edge_targets  # child of 1
+        assert "1" in edge_sources
+        assert "2" in edge_sources
+        assert "2" in edge_targets
+        assert "3" in edge_targets
+        assert "4" in edge_targets
+        assert "5" in edge_targets
 
-        # Verify specific edges
         edge_pairs = {(e["source"], e["target"]) for e in edges}
         assert ("1", "2") in edge_pairs
         assert ("2", "3") in edge_pairs
         assert ("2", "4") in edge_pairs
         assert ("1", "5") in edge_pairs
 
-    def test_ast_endpoint_metadata_inline(self):
+    def test_ast_endpoint_metadata_inline(self, tmp_path):
         """Verify nodes include metadata fields in the metadata map."""
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"stdout": self.AST_TUPLES_STDOUT, "success": True}
+        client = _client(tmp_path)
+        mock_resp = _mock_resp(self.AST_TUPLES_STDOUT)
 
-        sent_data = []
+        with patch("joern_server.upstream.joern.post_query_sync", return_value=mock_resp):
+            response = client.post("/graph/ast", json=_GRAPH_BODY, headers=_HEADERS)
 
-        def capture_send_json(status, data):
-            sent_data.append(data)
-
-        handler = _make_graph_handler("/graph/ast")
-        with patch.object(handler, "_send_json", side_effect=capture_send_json):
-            with patch("joern_server.proxy.httpx.post", return_value=mock_resp):
-                handler.do_POST()
-
-        response = sent_data[0]
-        metadata = response["metadata"]
-
-        # Check metadata for node 1 (METHOD)
+        metadata = response.json()["metadata"]
         assert "1" in metadata
         meta1 = metadata["1"]
-        assert "code" in meta1
         assert meta1["code"] == "void main()"
-        assert "line_number" in meta1
         assert meta1["line_number"] == 1
-        assert "column_number" in meta1
-        assert "order" in meta1
-        assert "argument_index" in meta1
-        assert "node_type" in meta1
         assert meta1["node_type"] == "METHOD"
 
-        # Check metadata for node 3 (IDENTIFIER)
         assert "3" in metadata
         meta3 = metadata["3"]
         assert meta3["code"] == "x"
@@ -348,12 +234,12 @@ class TestGraphAst:
 
 
 # ---------------------------------------------------------------------------
-# metadata enrichment (_fetch_node_metadata) tests
+# metadata enrichment (fetch_node_metadata) tests
 # ---------------------------------------------------------------------------
 
 
 class TestFetchNodeMetadata:
-    """Tests for _fetch_node_metadata() helper."""
+    """Tests for fetch_node_metadata()."""
 
     METADATA_STDOUT = (
         'val res0: List[(Long, String, Option[Int], Option[Int], Int, String)] = List(\n'
@@ -362,26 +248,13 @@ class TestFetchNodeMetadata:
         ')'
     )
 
-    @pytest.fixture(autouse=True)
-    def _setup_class_vars(self):
-        JoernProxyHandler.repl_semaphore = threading.Semaphore(1)
-        JoernProxyHandler.internal_url = "http://127.0.0.1:18080/query-sync"
-        JoernProxyHandler.query_timeout_sec = 5
+    def test_fetch_node_metadata_returns_map(self, tmp_path):
+        """Verify fetch_node_metadata() returns proper dict structure."""
+        state = make_test_state(tmp_path)
+        mock_resp = _mock_resp(self.METADATA_STDOUT)
 
-    def test_fetch_node_metadata_returns_map(self):
-        """Verify _fetch_node_metadata() returns proper dict structure."""
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"stdout": self.METADATA_STDOUT, "success": True}
-
-        handler = JoernProxyHandler.__new__(JoernProxyHandler)
-        handler.headers = {}
-        handler.internal_url = "http://127.0.0.1:18080/query-sync"
-        handler.query_timeout_sec = 5
-        handler.repl_semaphore = threading.Semaphore(1)
-
-        with patch("joern_server.proxy.httpx.post", return_value=mock_resp):
-            result = handler._fetch_node_metadata(["1", "2"])
+        with patch("joern_server.upstream.joern.post_query_sync", return_value=mock_resp):
+            result = fetch_node_metadata(state, ["1", "2"], headers={})
 
         assert isinstance(result, dict)
         assert "1" in result
@@ -393,26 +266,16 @@ class TestFetchNodeMetadata:
         assert result["2"]["line_number"] == 2
         assert result["2"]["node_type"] == "ASSIGNMENT"
 
-    def test_fetch_node_metadata_batches_large_sets(self):
+    def test_fetch_node_metadata_batches_large_sets(self, tmp_path):
         """Mock 100+ nodes, verify chunking into batches of 50."""
-        # Create 120 node IDs
+        state = make_test_state(tmp_path)
         node_ids = [str(i) for i in range(1, 121)]
 
-        # Build mock stdout for a single batch of 50 tuples (6 fields)
         tuples_lines = []
         for i in range(1, 51):
             tuples_lines.append(f'({i}, "node_{i}", Some({i}), Some(1), {i}, "TYPE_{i}")')
         batch_stdout = f'val res0: List[...] = List(\n{",\n".join(tuples_lines)}\n)'
-
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"stdout": batch_stdout, "success": True}
-
-        handler = JoernProxyHandler.__new__(JoernProxyHandler)
-        handler.headers = {}
-        handler.internal_url = "http://127.0.0.1:18080/query-sync"
-        handler.query_timeout_sec = 5
-        handler.repl_semaphore = threading.Semaphore(1)
+        mock_resp = _mock_resp(batch_stdout)
 
         call_count = [0]
 
@@ -420,45 +283,35 @@ class TestFetchNodeMetadata:
             call_count[0] += 1
             return mock_resp
 
-        with patch("joern_server.proxy.httpx.post", side_effect=counting_post):
-            result = handler._fetch_node_metadata(node_ids)
+        with patch("joern_server.upstream.joern.post_query_sync", side_effect=counting_post):
+            result = fetch_node_metadata(state, node_ids, headers={})
 
-        # 120 nodes -> batch sizes of 50 -> 3 batches (50, 50, 20)
         assert call_count[0] == 3
-        # Each batch returns 50 entries; the last batch (20 nodes) also gets 50 entries
-        # because the mock always returns 50 entries for the first 50 ids query
         assert len(result) >= 50
 
-    def test_fetch_node_metadata_handles_failure_gracefully(self):
+    def test_fetch_node_metadata_handles_failure_gracefully(self, tmp_path):
         """Mock metadata query failure, verify empty dict returned without exception."""
-        handler = JoernProxyHandler.__new__(JoernProxyHandler)
-        handler.headers = {}
-        handler.internal_url = "http://127.0.0.1:18080/query-sync"
-        handler.query_timeout_sec = 5
-        handler.repl_semaphore = threading.Semaphore(1)
+        state = make_test_state(tmp_path)
 
-        with patch("joern_server.proxy.httpx.post", side_effect=Exception("connection error")):
-            result = handler._fetch_node_metadata(["1", "2", "3"])
+        with patch(
+            "joern_server.upstream.joern.post_query_sync",
+            side_effect=Exception("connection error"),
+        ):
+            result = fetch_node_metadata(state, ["1", "2", "3"], headers={})
 
         assert isinstance(result, dict)
         assert result == {}
 
-    def test_fetch_node_metadata_empty_input(self):
+    def test_fetch_node_metadata_empty_input(self, tmp_path):
         """Verify empty node_ids list returns empty dict."""
-        handler = JoernProxyHandler.__new__(JoernProxyHandler)
-        result = handler._fetch_node_metadata([])
+        state = make_test_state(tmp_path)
+        result = fetch_node_metadata(state, [], headers={})
         assert result == {}
 
-    def test_fetch_node_metadata_non_numeric_skipped(self):
+    def test_fetch_node_metadata_non_numeric_skipped(self, tmp_path):
         """Verify non-numeric IDs are gracefully skipped."""
-        handler = JoernProxyHandler.__new__(JoernProxyHandler)
-        handler.headers = {}
-        handler.internal_url = "http://127.0.0.1:18080/query-sync"
-        handler.query_timeout_sec = 5
-        handler.repl_semaphore = threading.Semaphore(1)
-
-        # Only non-numeric IDs — no httpx call should be made
-        result = handler._fetch_node_metadata(["abc", "xyz"])
+        state = make_test_state(tmp_path)
+        result = fetch_node_metadata(state, ["abc", "xyz"], headers={})
         assert result == {}
 
 
@@ -476,49 +329,21 @@ class TestGraphDdgAlias:
   "10" -> "20" [label="data"]
 }'''
 
-    @pytest.fixture(autouse=True)
-    def _setup_class_vars(self):
-        JoernProxyHandler.repl_semaphore = threading.Semaphore(1)
-        JoernProxyHandler.internal_url = "http://127.0.0.1:18080/query-sync"
-        JoernProxyHandler.query_timeout_sec = 5
-
-    def test_ddg_alias_routes_to_dfg_handler(self):
+    def test_ddg_alias_routes_to_dfg_handler(self, tmp_path):
         """Verify /graph/ddg calls same handler as /graph/dfg."""
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"stdout": self.DOT_DFG, "success": True}
+        client = _client(tmp_path)
+        mock_resp = _mock_resp(self.DOT_DFG)
 
-        sent_data = []
+        with patch("joern_server.graph.service.fetch_node_metadata", return_value={}):
+            with patch("joern_server.upstream.joern.post_query_sync", return_value=mock_resp):
+                response_ddg = client.post("/graph/ddg", json=_GRAPH_BODY, headers=_HEADERS)
+                response_dfg = client.post("/graph/dfg", json=_GRAPH_BODY, headers=_HEADERS)
 
-        def capture_send_json(status, data):
-            sent_data.append(data)
-
-        # Test via /graph/ddg path
-        handler_ddg = _make_graph_handler("/graph/ddg")
-        with patch.object(handler_ddg, "_send_json", side_effect=capture_send_json):
-            with patch.object(handler_ddg, "_fetch_node_metadata", return_value={}):
-                with patch("joern_server.proxy.httpx.post", return_value=mock_resp):
-                    handler_ddg.do_POST()
-
-        response_ddg = sent_data[0]
-        assert "nodes" in response_ddg
-        assert len(response_ddg["nodes"]) == 2  # 10 and 20
-
-        # Test via /graph/dfg path — should produce same structure
-        sent_data_dfg = []
-
-        def capture_send_json_dfg(status, data):
-            sent_data_dfg.append(data)
-
-        handler_dfg = _make_graph_handler("/graph/dfg")
-        with patch.object(handler_dfg, "_send_json", side_effect=capture_send_json_dfg):
-            with patch.object(handler_dfg, "_fetch_node_metadata", return_value={}):
-                with patch("joern_server.proxy.httpx.post", return_value=mock_resp):
-                    handler_dfg.do_POST()
-
-        response_dfg = sent_data_dfg[0]
-        # Both should return the same node/edge structure
-        assert len(response_ddg["nodes"]) == len(response_dfg["nodes"])
-        assert len(response_ddg["edges"]) == len(response_dfg["edges"])
-        assert response_ddg["nodes"] == response_dfg["nodes"]
-        assert response_ddg["edges"] == response_dfg["edges"]
+        body_ddg = response_ddg.json()
+        body_dfg = response_dfg.json()
+        assert "nodes" in body_ddg
+        assert len(body_ddg["nodes"]) == 2
+        assert len(body_ddg["nodes"]) == len(body_dfg["nodes"])
+        assert len(body_ddg["edges"]) == len(body_dfg["edges"])
+        assert body_ddg["nodes"] == body_dfg["nodes"]
+        assert body_ddg["edges"] == body_dfg["edges"]

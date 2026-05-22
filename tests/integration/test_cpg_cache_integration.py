@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from joern_server.proxy import CPGRegistry
+from joern_server.cpg.registry import CPGRegistry
 
 
 # ---------------------------------------------------------------------------
