@@ -21,6 +21,11 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 
+try:
+    from joern_server.metrics import PrometheusMetrics
+except ModuleNotFoundError:
+    from metrics import PrometheusMetrics  # docker: python3 /app/joern_server/proxy.py
+
 
 def _env_int(name: str, default: int) -> int:
     v = os.getenv(name)
@@ -41,10 +46,40 @@ def _upstream_headers(handler: BaseHTTPRequestHandler) -> dict[str, str]:
     sid = handler.headers.get("X-Session-Id")
     if sid:
         h["X-Session-Id"] = sid
+    aff = handler.headers.get("X-Affinity-Key")
+    if aff:
+        h["X-Affinity-Key"] = aff
     rid = handler.headers.get("X-Request-Id")
     if rid:
         h["X-Request-Id"] = rid
     return h
+
+
+def _affinity_key(handler: BaseHTTPRequestHandler) -> str:
+    """Routing/REPL/cache key — typically sample_id (see X-Affinity-Key)."""
+    raw = handler.headers.get("X-Affinity-Key")
+    if raw and str(raw).strip():
+        return _safe_sample_id(str(raw).strip())
+    return "default"
+
+
+def _request_id(handler: BaseHTTPRequestHandler) -> str:
+    raw = handler.headers.get("X-Request-Id")
+    if raw and str(raw).strip():
+        return str(raw).strip()
+    return uuid.uuid4().hex
+
+
+def _sample_id_from_cpg_path(path: str) -> Optional[str]:
+    """Extract sample_id from /workspace/cpg-out/<sample_id> style paths."""
+    p = (path or "").strip().rstrip("/")
+    if not p:
+        return None
+    parts = Path(p).parts
+    for i, part in enumerate(parts):
+        if part == "cpg-out" and i + 1 < len(parts):
+            return _safe_sample_id(parts[i + 1])
+    return _safe_sample_id(Path(p).name) if p else None
 
 
 def _safe_sample_id(raw: str) -> str:
@@ -574,13 +609,13 @@ class LRUCache:
         self.misses = 0
         self.evictions = 0
 
-    def _make_key(self, session_id: str, query_hash: str) -> str:
-        """Create cache key from session_id and md5(query_hash)."""
-        return f"{session_id}:{query_hash}"
+    def _make_key(self, affinity_key: str, query_hash: str) -> str:
+        """Create cache key from affinity_key (sample_id) and md5(query_hash)."""
+        return f"{affinity_key}:{query_hash}"
 
-    def get(self, session_id: str, query_hash: str) -> Optional[dict]:
+    def get(self, affinity_key: str, query_hash: str) -> Optional[dict]:
         """Get cached result if exists and not expired."""
-        key = self._make_key(session_id, query_hash)
+        key = self._make_key(affinity_key, query_hash)
         current_time = time.time()
 
         with self._lock:
@@ -600,9 +635,9 @@ class LRUCache:
             self.hits += 1
             return result
 
-    def put(self, session_id: str, query_hash: str, result: dict) -> None:
+    def put(self, affinity_key: str, query_hash: str, result: dict) -> None:
         """Add result to cache, evicting LRU entries if necessary."""
-        key = self._make_key(session_id, query_hash)
+        key = self._make_key(affinity_key, query_hash)
         current_time = time.time()
 
         with self._lock:
@@ -811,10 +846,11 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
     # Maps sample_id → source_hash for in-flight/recent parses (thread-safe via _sid_hash_lock)
     _sid_to_hash: dict = {}
     _sid_hash_lock: threading.Lock = threading.Lock()
-    # Session-scoped CPG import state (guarded by repl_semaphore critical section).
-    _session_cpg_path: dict[str, str] = {}
-    _active_session_id: Optional[str] = None
+    # Affinity-scoped CPG import state (key = X-Affinity-Key / sample_id).
+    _affinity_cpg_path: dict[str, str] = {}
+    _active_affinity_key: Optional[str] = None
     _active_cpg_path: Optional[str] = None
+    metrics: Optional[PrometheusMetrics] = None
 
     def _log_event(self, event: str, **fields: Any) -> None:
         payload: dict[str, Any] = {
@@ -822,6 +858,8 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
             "event": event,
             "path": self.path,
             "session_id": self.headers.get("X-Session-Id"),
+            "affinity_key": _affinity_key(self),
+            "request_id": _request_id(self),
             "ts_ms": int(time.time() * 1000),
         }
         payload.update(fields)
@@ -881,10 +919,56 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
             timeout=timeout_sec,
         )
 
-    def _activate_session_cpg_if_needed(self, session_id: str) -> tuple[bool, Optional[str]]:
-        desired_cpg = self.__class__._session_cpg_path.get(session_id)
+    def _probe_joern(self, timeout_sec: float = 5.0) -> tuple[bool, int, Optional[str]]:
+        """Return (ok, latency_ms, error_message)."""
+        t0 = time.perf_counter()
+        try:
+            resp = httpx.post(
+                self.internal_url,
+                json={"query": "val _health = 1"},
+                headers=_upstream_headers(self),
+                timeout=timeout_sec,
+            )
+            latency_ms = int((time.perf_counter() - t0) * 1000.0)
+            if resp.status_code != 200:
+                return False, latency_ms, f"upstream status {resp.status_code}"
+            body = resp.json()
+            if isinstance(body, dict) and body.get("success") is False:
+                return False, latency_ms, "upstream success=false"
+            return True, latency_ms, None
+        except Exception as exc:
+            latency_ms = int((time.perf_counter() - t0) * 1000.0)
+            return False, latency_ms, str(exc)
+
+    def _clear_affinity_state(self, sample_id: str) -> None:
+        """Drop in-memory CPG binding for sample_id and best-effort close REPL graph."""
+        cpg_out = Path(self.cpg_out_dir) / sample_id
+        target = str(cpg_out)
+        to_remove: list[str] = []
+        for key, path in list(self.__class__._affinity_cpg_path.items()):
+            if key == sample_id or path.rstrip("/") == target.rstrip("/"):
+                to_remove.append(key)
+        for key in to_remove:
+            self.__class__._affinity_cpg_path.pop(key, None)
+
+        active_path = self.__class__._active_cpg_path
+        if active_path and active_path.rstrip("/") == target.rstrip("/"):
+            if self.repl_semaphore is not None:
+                with self.repl_semaphore:
+                    try:
+                        self._post_query_sync(query="close", timeout_sec=min(30, self.query_timeout_sec))
+                    except Exception:
+                        pass
+            self.__class__._active_cpg_path = None
+            self.__class__._active_affinity_key = None
+
+        if self.metrics is not None:
+            self.metrics.set_gauge("joern_proxy_affinity_map_size", float(len(self.__class__._affinity_cpg_path)))
+
+    def _activate_session_cpg_if_needed(self, affinity_key: str) -> tuple[bool, Optional[str]]:
+        desired_cpg = self.__class__._affinity_cpg_path.get(affinity_key)
         active_cpg = self.__class__._active_cpg_path
-        active_sid = self.__class__._active_session_id
+        active_key = self.__class__._active_affinity_key
 
         if desired_cpg:
             if active_cpg != desired_cpg:
@@ -896,27 +980,26 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
                 if resp.status_code != 200 or not success:
                     self._log_event(
                         "session_cpg_activate_failed",
-                        session_id=session_id,
+                        affinity_key=affinity_key,
                         desired_cpg=desired_cpg,
                         status_code=resp.status_code,
                     )
-                    self.__class__._session_cpg_path.pop(session_id, None)
-                    self.__class__._active_session_id = None
+                    self.__class__._affinity_cpg_path.pop(affinity_key, None)
+                    self.__class__._active_affinity_key = None
                     self.__class__._active_cpg_path = None
-                    return False, f"failed to activate session CPG for session {session_id}"
+                    return False, f"failed to activate CPG for affinity {affinity_key}"
                 self.__class__._active_cpg_path = desired_cpg
-            self.__class__._active_session_id = session_id
+            self.__class__._active_affinity_key = affinity_key
             return True, None
 
-        # No imported CPG for this session; clear prior active CPG to prevent leakage.
-        if active_cpg is not None and active_sid != session_id:
+        # No imported CPG for this affinity; clear prior active CPG to prevent leakage.
+        if active_cpg is not None and active_key != affinity_key:
             try:
                 self._post_query_sync(query="close", timeout_sec=self.query_timeout_sec)
             except Exception:
-                # Best-effort: even if close fails, avoid reusing stale active state.
                 pass
             self.__class__._active_cpg_path = None
-        self.__class__._active_session_id = session_id
+        self.__class__._active_affinity_key = affinity_key
         return True, None
 
     def _read_body(self) -> bytes:
@@ -945,7 +1028,36 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 (http.server naming)
         if self.path == "/health":
-            self._send_json(HTTPStatus.OK, {"ok": True})
+            probe_timeout = float(getattr(self, "health_probe_timeout_sec", 5))
+            ok, latency_ms, err = self._probe_joern(timeout_sec=probe_timeout)
+            if self.metrics is not None:
+                self.metrics.set_gauge("joern_proxy_joern_up", 1.0 if ok else 0.0)
+            payload: dict[str, Any] = {
+                "ok": ok,
+                "joern_ok": ok,
+                "latency_ms": latency_ms,
+            }
+            if err:
+                payload["error"] = err
+            status = HTTPStatus.OK if ok else HTTPStatus.SERVICE_UNAVAILABLE
+            self._send_json(status, payload)
+            return
+
+        if self.path == "/metrics":
+            if self.metrics is None:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "metrics not enabled"})
+                return
+            if self.metrics is not None:
+                self.metrics.set_gauge(
+                    "joern_proxy_affinity_map_size",
+                    float(len(self.__class__._affinity_cpg_path)),
+                )
+            body = self.metrics.render().encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
 
         if self.path == "/version":
@@ -1632,6 +1744,7 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
                             "archive_path": str(archive_path),
                         },
                     )
+                    self._clear_affinity_state(sample_id)
                     return
                 # source_hash unknown — fall through to delete
             if existed:
@@ -1646,6 +1759,7 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
                     "archived": False,
                 },
             )
+            self._clear_affinity_state(sample_id)
         except Exception as e:
             self._send_json(HTTPStatus.BAD_GATEWAY, _json_error(str(e), code="cleanup_failed"))
 
@@ -2046,13 +2160,13 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
                     query_preview = self._preview_query(query_str)
             except Exception:
                 query_class = "invalid_json"
-            request_id = self.headers.get("X-Request-Id")
-            session_id = self.headers.get("X-Session-Id") or "default"
+            request_id = _request_id(self)
+            affinity_key = _affinity_key(self)
 
             # Try cache hit for cacheable queries
             if self.query_cache and self._should_cache(query_class):
                 query_hash = self._query_hash(query_str)
-                cached_result = self.query_cache.get(session_id, query_hash)
+                cached_result = self.query_cache.get(affinity_key, query_hash)
                 if cached_result is not None:
                     self._log_event(
                         "query_sync",
@@ -2069,11 +2183,14 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
 
             with self.repl_semaphore:
                 if query_class != "importCpg":
-                    ok, activate_err = self._activate_session_cpg_if_needed(session_id)
+                    ok, activate_err = self._activate_session_cpg_if_needed(affinity_key)
                     if not ok:
                         self._send_json(
                             HTTPStatus.UNPROCESSABLE_ENTITY,
-                            _json_error(activate_err or "session cpg activation failed", code="session_cpg_activation_failed"),
+                            _json_error(
+                                activate_err or "session cpg activation failed",
+                                code="session_cpg_activation_failed",
+                            ),
                         )
                         return
                 resp = httpx.post(
@@ -2083,6 +2200,16 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
                     timeout=self.query_timeout_sec,
                 )
             latency_ms = int((time.perf_counter() - t0) * 1000.0)
+            if self.metrics is not None:
+                self.metrics.observe(
+                    "joern_proxy_query_sync_duration_seconds",
+                    latency_ms / 1000.0,
+                    labels={"query_class": query_class},
+                )
+                self.metrics.inc(
+                    "joern_proxy_query_sync_requests",
+                    labels={"status": str(resp.status_code), "query_class": query_class},
+                )
             # Preserve body; clients expect Joern's /query-sync JSON shape.
             resp_json = resp.json()
 
@@ -2109,14 +2236,24 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
             # Cache only genuinely successful responses.
             if self.query_cache and self._should_cache(query_class) and out_status == 200:
                 query_hash = self._query_hash(query_str)
-                self.query_cache.put(session_id, query_hash, resp_json)
+                self.query_cache.put(affinity_key, query_hash, resp_json)
 
             if query_class == "importCpg" and out_status == 200:
                 imported_path = self._extract_import_cpg_path(query_str)
                 if imported_path:
-                    self.__class__._session_cpg_path[session_id] = imported_path
-                    self.__class__._active_session_id = session_id
+                    key = affinity_key
+                    if key == "default":
+                        derived = _sample_id_from_cpg_path(imported_path)
+                        if derived:
+                            key = derived
+                    self.__class__._affinity_cpg_path[key] = imported_path
+                    self.__class__._active_affinity_key = key
                     self.__class__._active_cpg_path = imported_path
+                    if self.metrics is not None:
+                        self.metrics.set_gauge(
+                            "joern_proxy_affinity_map_size",
+                            float(len(self.__class__._affinity_cpg_path)),
+                        )
 
             self._log_event(
                 "query_sync",
@@ -2138,17 +2275,44 @@ class JoernProxyHandler(BaseHTTPRequestHandler):
                 error_type="TimeoutException",
                 error=str(e),
             )
-            self._send_json(HTTPStatus.GATEWAY_TIMEOUT, {"error": str(e)})
-        except Exception as e:
+            if self.metrics is not None:
+                self.metrics.inc("joern_proxy_query_sync_requests", labels={"status": "504", "query_class": query_class})
+            self._send_json(
+                HTTPStatus.GATEWAY_TIMEOUT,
+                {**_json_error(str(e), code="upstream_timeout"), "request_id": request_id},
+            )
+        except httpx.HTTPError as e:
             latency_ms = int((time.perf_counter() - t0) * 1000.0)
             self._log_event(
                 "query_sync_error",
+                request_id=request_id,
                 query_class=query_class,
                 latency_ms=latency_ms,
                 error_type=type(e).__name__,
                 error=str(e),
             )
-            self._send_json(HTTPStatus.BAD_GATEWAY, {"error": str(e)})
+            if self.metrics is not None:
+                self.metrics.inc("joern_proxy_query_sync_requests", labels={"status": "502", "query_class": query_class})
+            self._send_json(
+                HTTPStatus.BAD_GATEWAY,
+                {**_json_error(str(e), code="upstream_unreachable"), "request_id": request_id},
+            )
+        except Exception as e:
+            latency_ms = int((time.perf_counter() - t0) * 1000.0)
+            self._log_event(
+                "query_sync_error",
+                request_id=request_id,
+                query_class=query_class,
+                latency_ms=latency_ms,
+                error_type=type(e).__name__,
+                error=str(e),
+            )
+            if self.metrics is not None:
+                self.metrics.inc("joern_proxy_query_sync_requests", labels={"status": "502", "query_class": query_class})
+            self._send_json(
+                HTTPStatus.BAD_GATEWAY,
+                {**_json_error(str(e), code="upstream_error"), "request_id": request_id},
+            )
 
     def log_message(self, fmt: str, *args) -> None:
         # Silence default http.server logging in container logs.
@@ -2205,6 +2369,8 @@ def main() -> None:
     JoernProxyHandler.parse_repo_upload_ttl_hours = parse_repo_upload_ttl_hours
     JoernProxyHandler.repo_uploads_dir = repo_uploads_dir
     JoernProxyHandler.query_timeout_sec = query_timeout_sec
+    JoernProxyHandler.health_probe_timeout_sec = _env_int("JOERN_HEALTH_PROBE_TIMEOUT_SEC", 5)
+    JoernProxyHandler.metrics = PrometheusMetrics()
     Path(repo_uploads_dir).mkdir(parents=True, exist_ok=True)
     httpd = ThreadingHTTPServer((proxy_host, proxy_port), JoernProxyHandler)
     httpd.serve_forever()

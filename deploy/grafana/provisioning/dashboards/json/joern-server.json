@@ -1,0 +1,112 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 1 }, { "color": "green", "value": 1 }] }
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "id": 7,
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Active replicas",
+      "type": "stat",
+      "targets": [{ "expr": "count(up{job=\"joern-proxy\"} == 1)", "legendFormat": "replicas" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "options": { "0": { "color": "red", "text": "DOWN" } }, "type": "value" },
+            { "options": { "1": { "color": "green", "text": "UP" } }, "type": "value" }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        }
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 4, "y": 0 },
+      "id": 1,
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Joern up (scraped replicas only)",
+      "type": "stat",
+      "targets": [{ "expr": "joern_proxy_joern_up and on(instance) up{job=\"joern-proxy\"}", "legendFormat": "{{container}}" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "id": 2,
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "title": "Affinity map size",
+      "type": "stat",
+      "targets": [{ "expr": "joern_proxy_affinity_map_size and on(instance) up{job=\"joern-proxy\"}", "legendFormat": "{{container}}" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "id": 3,
+      "title": "Proxy uptime",
+      "type": "stat",
+      "targets": [{ "expr": "joern_proxy_uptime_seconds and on(instance) up{job=\"joern-proxy\"}", "legendFormat": "{{container}}" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "id": 4,
+      "title": "Query-sync request rate by status",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(joern_proxy_query_sync_requests_total[5m]) * on(instance) group_left() up{job=\"joern-proxy\"}) by (status)",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "id": 5,
+      "title": "Query-sync latency (avg from sum/count)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(joern_proxy_query_sync_duration_seconds_sum[5m]) * on(instance) group_left() up{job=\"joern-proxy\"}) / sum(rate(joern_proxy_query_sync_duration_seconds_count[5m]) * on(instance) group_left() up{job=\"joern-proxy\"})",
+          "legendFormat": "avg"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 12 },
+      "id": 6,
+      "title": "502/504 rate",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(joern_proxy_query_sync_requests_total{status=~\"502|504\"}[5m]) * on(instance) group_left() up{job=\"joern-proxy\"})",
+          "legendFormat": "errors/sec"
+        }
+      ]
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 39,
+  "tags": ["joern", "neuralatlas"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timezone": "browser",
+  "title": "Joern Server",
+  "uid": "joern-server-main",
+  "version": 2
+}

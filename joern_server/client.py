@@ -43,11 +43,10 @@ class JoernHTTPQueryExecutor:
     which targets ``/query`` + WebSocket). For the reference WebSocket client see
     https://github.com/joernio/cpgqls-client-python
 
-    **Session affinity:** pass ``session_id`` so each request includes ``X-Session-Id``.
-    Configure your load balancer to pin on that header when one VIP fronts many Joern
-    containers. For multiple explicit ``base_urls`` without sticky LB, set
-    ``reuse_base=True`` so ``parse_source`` and ``execute`` stay on the first chosen
-    base for this executor instance.
+    **Headers:** pass ``session_id`` for ``X-Session-Id`` (logging / client identity).
+    Pass ``affinity_key`` (typically ``sample_id``) for ``X-Affinity-Key`` so HAProxy
+    and the proxy pin REPL state and query cache to the same replica. For multiple
+    explicit ``base_urls`` without sticky LB, set ``reuse_base=True``.
     """
 
     def __init__(
@@ -59,6 +58,7 @@ class JoernHTTPQueryExecutor:
         retries: int = 2,
         http_client: httpx.Client | None = None,
         session_id: str | None = None,
+        affinity_key: str | None = None,
         reuse_base: bool = False,
     ) -> None:
         self._bases = _normalize_base_urls(base_urls)
@@ -66,6 +66,7 @@ class JoernHTTPQueryExecutor:
         self._timeout = timeout
         self._retries = max(0, int(retries))
         self._session_id = session_id.strip() if session_id and str(session_id).strip() else None
+        self._affinity_key = affinity_key.strip() if affinity_key and str(affinity_key).strip() else None
         self._reuse_base = bool(reuse_base)
         self._pinned_base: str | None = None
         self._owns_client = http_client is None
@@ -90,7 +91,13 @@ class JoernHTTPQueryExecutor:
         h: dict[str, str] = {"Content-Type": "application/json"}
         if self._session_id:
             h["X-Session-Id"] = self._session_id
+        if self._affinity_key:
+            h["X-Affinity-Key"] = self._affinity_key
         return h
+
+    def set_affinity_key(self, affinity_key: str | None) -> None:
+        """Update X-Affinity-Key (e.g. when switching to a new sample_id)."""
+        self._affinity_key = affinity_key.strip() if affinity_key and str(affinity_key).strip() else None
 
     def _base_for_request(self) -> str:
         with self._lock:
@@ -206,3 +213,26 @@ class JoernHTTPQueryExecutor:
                     break
         assert last_err is not None
         return {"ok": False, "error": f"request failed after {self._retries + 1} attempt(s): {last_err}"}
+
+    def cleanup(self, sample_id: str, *, archive: bool = False) -> dict[str, Any]:
+        """Remove or archive a CPG via ``POST /cleanup``. Sets affinity to sample_id for routing."""
+        prev = self._affinity_key
+        self.set_affinity_key(sample_id)
+        try:
+            base = self._base_for_request()
+            url = f"{base.rstrip('/')}/cleanup"
+            payload = {"sample_id": sample_id, "archive": bool(archive)}
+            r = self._client.post(
+                url,
+                json=payload,
+                auth=self._auth,
+                headers=self._request_headers(),
+                timeout=self._timeout,
+            )
+            r.raise_for_status()
+            body = r.json()
+            return body if isinstance(body, dict) else {"ok": False, "error": "invalid response"}
+        except httpx.HTTPError as e:
+            return {"ok": False, "error": str(e)}
+        finally:
+            self.set_affinity_key(prev)

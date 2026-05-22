@@ -72,7 +72,11 @@ def test_live_sequential_same_session_id_many_query_sync(require_live_joern: str
             r = client.post(
                 f"{url}/query-sync",
                 json={"query": "version"},
-                headers={"Content-Type": "application/json", "X-Session-Id": sid},
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Session-Id": sid,
+                    "X-Affinity-Key": sid,
+                },
             )
             r.raise_for_status()
             body = r.json()
@@ -98,7 +102,11 @@ def test_live_stress_concurrent_sessions(require_live_joern: str) -> None:
                 r = client.post(
                     f"{url}/query-sync",
                     json={"query": "version"},
-                    headers={"Content-Type": "application/json", "X-Session-Id": sid},
+                    headers={
+                    "Content-Type": "application/json",
+                    "X-Session-Id": sid,
+                    "X-Affinity-Key": sid,
+                },
                 )
                 r.raise_for_status()
                 body = r.json()
@@ -122,7 +130,11 @@ def _post_cleanup(cli: httpx.Client, base: str, sample_id: str, session_id: str)
     r = cli.post(
         f"{base}/cleanup",
         json={"sample_id": sample_id},
-        headers={"Content-Type": "application/json", "X-Session-Id": session_id},
+        headers={
+            "Content-Type": "application/json",
+            "X-Session-Id": session_id,
+            "X-Affinity-Key": sample_id,
+        },
         timeout=180.0,
     )
     r.raise_for_status()
@@ -167,6 +179,7 @@ def test_live_executor_session_id_under_stress(require_live_joern: str) -> None:
                 base_url,
                 http_client=hc,
                 session_id=session_id,
+                affinity_key=None,
                 reuse_base=True,
                 retries=1,
                 timeout=180.0,
@@ -174,6 +187,7 @@ def test_live_executor_session_id_under_stress(require_live_joern: str) -> None:
             for rnd in range(rounds):
                 fn = f"uniqfn_t{tidx}_r{rnd}"
                 sample_id = f"na-{run_tag}-t{tidx}-r{rnd}"
+                ex.set_affinity_key(sample_id)
                 source = f"void {fn}(void) {{}}\n"
                 pr = ex.parse_source(
                     sample_id=sample_id,
@@ -228,7 +242,11 @@ def test_live_version_stdout_stable_per_session(require_live_joern: str) -> None
             r = client.post(
                 f"{url}/query-sync",
                 json={"query": "version"},
-                headers={"Content-Type": "application/json", "X-Session-Id": sid},
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Session-Id": sid,
+                    "X-Affinity-Key": sid,
+                },
             )
             r.raise_for_status()
             body: dict[str, Any] = r.json()

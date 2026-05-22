@@ -1,0 +1,35 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: joern-proxy
+    metrics_path: /metrics
+    scrape_interval: 15s
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 30s
+        filters:
+          - name: status
+            values: [running, restarting]
+    relabel_configs:
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        regex: joern
+        action: keep
+      # Only scrape on the compose scale network (one target per replica).
+      - source_labels: [__meta_docker_network_name]
+        regex: deploy_joern-net
+        action: keep
+      - source_labels: [__meta_docker_container_network_mode]
+        regex: none
+        action: drop
+      - source_labels: [__meta_docker_network_ip]
+        regex: ''
+        action: drop
+      - source_labels: [__meta_docker_network_ip]
+        target_label: __address__
+        replacement: ${1}:8080
+      - source_labels: [__meta_docker_container_name]
+        regex: '/?(.*)'
+        target_label: container
+

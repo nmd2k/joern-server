@@ -1,6 +1,18 @@
-# Joern language shortcuts (for `joern-parse --language`)
+# joern_server package
 
-This directory contains the Python HTTP client for Joern (see `joern_server/client.py`), plus a small amount of CLI glue.
+Python HTTP proxy and client for Joern Server. **Full documentation:** [`docs/index.md`](../docs/index.md).
+
+| Module | Role |
+|--------|------|
+| `proxy.py` | HTTP API server (:8080) |
+| `client.py` | `JoernHTTPQueryExecutor` |
+| `metrics.py` | Prometheus metrics for `/metrics` |
+
+---
+
+## Joern language shortcuts (for `joern-parse --language`)
+
+This package also documents `joern-parse --language` values used by the parse pipeline.
 
 When building a CPG in this repo, the key step is usually `joern-parse` (wrapped by `scripts/parse-and-serve.sh`). `joern-parse` can be instructed which frontend/parser to use via `--language <ARG>`.
 

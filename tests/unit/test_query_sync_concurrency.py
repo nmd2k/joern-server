@@ -70,6 +70,7 @@ class TestQuerySyncConcurrencyGuard:
             body = b'{"query": "cpg.method.name.l"}'
             handler.path = "/query-sync"
             handler.headers = {
+                "X-Affinity-Key": session_id,
                 "X-Session-Id": session_id,
                 "X-Request-Id": f"req-{session_id}",
                 "Content-Length": str(len(body)),
@@ -83,8 +84,9 @@ class TestQuerySyncConcurrencyGuard:
             barrier.wait()  # both threads start together
             with patch("joern_server.proxy.httpx.post", side_effect=slow_post):
                 with patch.object(handler, "_read_body", return_value=body):
-                    with patch.object(handler, "_send_json"):
-                        handler.do_POST()
+                    with patch.object(handler, "_activate_session_cpg_if_needed", return_value=(True, None)):
+                        with patch.object(handler, "_send_json"):
+                            handler.do_POST()
             results.append(session_id)
 
         t1 = threading.Thread(target=run_handler, args=("session-A",))
@@ -187,12 +189,13 @@ class TestQuerySyncConcurrencyGuard:
 
 
 class TestSessionCPGIsolation:
-    def _run_query(self, session_id: str, query: str, fake_post):
+    def _run_query(self, affinity_key: str, query: str, fake_post):
         handler = _make_handler()
         body = json.dumps({"query": query}).encode("utf-8")
         handler.headers = {
-            "X-Session-Id": session_id,
-            "X-Request-Id": f"req-{session_id}",
+            "X-Affinity-Key": affinity_key,
+            "X-Session-Id": f"sess-{affinity_key}",
+            "X-Request-Id": f"req-{affinity_key}",
             "Content-Length": str(len(body)),
             "Content-Type": "application/json",
         }
@@ -216,8 +219,9 @@ class TestSessionCPGIsolation:
         return resp
 
     def test_session_without_import_cannot_see_other_session_cpg(self):
-        JoernProxyHandler._session_cpg_path = {}
-        JoernProxyHandler._active_session_id = None
+        JoernProxyHandler._affinity_cpg_path = {}
+        JoernProxyHandler._active_affinity_key = None
+        JoernProxyHandler._active_cpg_path = None
         JoernProxyHandler._active_cpg_path = None
 
         active_cpg = None
@@ -243,20 +247,21 @@ class TestSessionCPGIsolation:
                 return self._mk_resp(200, {"success": True, "stdout": f"List({', '.join(methods)})", "stderr": ""})
             return self._mk_resp(200, {"success": True, "stdout": "", "stderr": ""})
 
-        st_a_import, _ = self._run_query("session-a", 'importCpg("/tmp/a.cpg")', fake_post)
+        st_a_import, _ = self._run_query("cpg-a", 'importCpg("/tmp/a.cpg")', fake_post)
         assert st_a_import == HTTPStatus.OK
 
-        st_a_q, body_a_q = self._run_query("session-a", "cpg.method.name.l", fake_post)
+        st_a_q, body_a_q = self._run_query("cpg-a", "cpg.method.name.l", fake_post)
         assert st_a_q == HTTPStatus.OK
         assert "only_a" in body_a_q.get("stdout", "")
 
-        st_b_q, body_b_q = self._run_query("session-b", "cpg.method.name.l", fake_post)
+        st_b_q, body_b_q = self._run_query("cpg-b", "cpg.method.name.l", fake_post)
         assert st_b_q == HTTPStatus.OK
         assert "only_a" not in body_b_q.get("stdout", "")
 
     def test_session_a_result_stable_after_session_b_import(self):
-        JoernProxyHandler._session_cpg_path = {}
-        JoernProxyHandler._active_session_id = None
+        JoernProxyHandler._affinity_cpg_path = {}
+        JoernProxyHandler._active_affinity_key = None
+        JoernProxyHandler._active_cpg_path = None
         JoernProxyHandler._active_cpg_path = None
 
         active_cpg = None
@@ -284,10 +289,10 @@ class TestSessionCPGIsolation:
                 return self._mk_resp(200, {"success": True, "stdout": f"List({', '.join(methods)})", "stderr": ""})
             return self._mk_resp(200, {"success": True, "stdout": "", "stderr": ""})
 
-        assert self._run_query("session-a", 'importCpg("/tmp/a.cpg")', fake_post)[0] == HTTPStatus.OK
-        assert self._run_query("session-b", 'importCpg("/tmp/b.cpg")', fake_post)[0] == HTTPStatus.OK
+        assert self._run_query("cpg-a", 'importCpg("/tmp/a.cpg")', fake_post)[0] == HTTPStatus.OK
+        assert self._run_query("cpg-b", 'importCpg("/tmp/b.cpg")', fake_post)[0] == HTTPStatus.OK
 
-        st_a_q, body_a_q = self._run_query("session-a", "cpg.method.name.l", fake_post)
+        st_a_q, body_a_q = self._run_query("cpg-a", "cpg.method.name.l", fake_post)
         assert st_a_q == HTTPStatus.OK
         assert "only_a" in body_a_q.get("stdout", "")
         assert "only_b" not in body_a_q.get("stdout", "")

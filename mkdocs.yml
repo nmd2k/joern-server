@@ -5,7 +5,6 @@ site_author: NeuralAtlas Team
 theme:
   name: material
   palette:
-    # Light mode
     - media: "(prefers-color-scheme: light)"
       scheme: default
       primary: indigo
@@ -13,7 +12,6 @@ theme:
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
-    # Dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
       primary: indigo
@@ -66,11 +64,13 @@ extra_css:
   - stylesheets/extra.css
 
 nav:
-  - Welcome: index.md
+  - Home: index.md
   - Architecture: ARCHITECTURE.md
-  - Usage Guide:
-      - Getting Started: getting_started.md
-      - Deploy: deploy.md
-      - Query Guide: query_guide.md
-      - Testing Guide: testing.md
-  - API Reference: api_reference.md
+  - Guides:
+      - Getting started: getting_started.md
+      - Query and parsing: query_guide.md
+      - Deployment: deploy.md
+  - Developer:
+      - Developer guide: developer_guide.md
+      - Testing: testing.md
+      - API reference: api_reference.md

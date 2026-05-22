@@ -1,0 +1,10 @@
+apiVersion: 1
+providers:
+  - name: joern-server
+    orgId: 1
+    folder: Joern Server
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/json

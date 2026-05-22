@@ -1,0 +1,48 @@
+# Optional monitoring stack for joern-server scale deploy.
+#
+# Start monitoring ONLY (does not touch joern replicas — requires scale net already up):
+#   docker compose -f deploy/compose.monitoring.yml --project-name joern-monitoring up -d
+#
+# Do NOT run monitoring alone with --project-name deploy if joern was started as
+# project "deploy" via compose.scale.yml; Compose will remove "orphan" joern services.
+#
+# Prometheus: http://localhost:9090
+# Grafana:    http://localhost:3001  (admin / admin unless GF_SECURITY_ADMIN_PASSWORD set)
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: joern-prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    # prom/prometheus runs as nobody; docker.sock is root:docker (see DOCKER_GID).
+    group_add:
+      - "${DOCKER_GID:-999}"
+    networks:
+      - joern-net
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    container_name: joern-grafana
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+    networks:
+      - joern-net
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+networks:
+  joern-net:
+    external: true
+    name: deploy_joern-net

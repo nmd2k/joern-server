@@ -4,6 +4,7 @@ import json
 import os
 import re
 import signal
+import socket
 import subprocess
 import threading
 import time
@@ -82,7 +83,11 @@ def _wait_for_http_ok(url: str, *, timeout_s: float = 8.0, auth: Optional[tuple[
         try:
             r = httpx.get(url, timeout=1.0, auth=auth)
             if r.status_code == 200:
-                return
+                body = r.json()
+                if body.get("joern_ok") is False:
+                    pass
+                else:
+                    return
         except Exception:
             pass
         time.sleep(0.2)
