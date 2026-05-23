@@ -24,7 +24,11 @@ JOERN_IMPORT_SC="${JOERN_IMPORT_SC:-}"
 
 JOERN_PID=""
 PROXY_PID=""
+WATCHDOG_PID=""
 JOERN_RESTART_COUNT=0
+
+JOERN_WATCHDOG_INTERVAL_SEC="${JOERN_WATCHDOG_INTERVAL_SEC:-5}"
+JOERN_WATCHDOG_FAIL_THRESHOLD="${JOERN_WATCHDOG_FAIL_THRESHOLD:-3}"
 
 if [ ! -x "$JOERN_BIN" ]; then
   echo "unified-entrypoint: joern binary not found at $JOERN_BIN" >&2
@@ -55,7 +59,16 @@ stop_joern() {
   JOERN_PID=""
 }
 
+stop_watchdog() {
+  if [ -n "$WATCHDOG_PID" ] && kill -0 "$WATCHDOG_PID" >/dev/null 2>&1; then
+    kill "$WATCHDOG_PID" >/dev/null 2>&1 || true
+    wait "$WATCHDOG_PID" >/dev/null 2>&1 || true
+  fi
+  WATCHDOG_PID=""
+}
+
 cleanup() {
+  stop_watchdog
   stop_proxy
   stop_joern
 }
@@ -143,23 +156,65 @@ restart_stack() {
     exit 1
   fi
   echo "unified-entrypoint: restarting joern+proxy (attempt $JOERN_RESTART_COUNT)" >&2
+  stop_watchdog
   stop_proxy
   stop_joern
   sleep "$JOERN_RESTART_DELAY_SEC"
   start_joern
   wait_for_joern_ready || exit 1
   start_proxy || exit 1
+  start_watchdog || exit 1
+}
+
+start_watchdog() {
+  (
+    fail_count=0
+    url="http://${JOERN_INTERNAL_HOST}:${JOERN_INTERNAL_PORT}/query-sync"
+    body='{"query":"val _health = 1"}'
+    while true; do
+      if [ -n "$JOERN_SERVER_AUTH_USERNAME" ] && [ -n "$JOERN_SERVER_AUTH_PASSWORD" ]; then
+        if curl -sf --connect-timeout 2 --max-time 5 \
+          -u "${JOERN_SERVER_AUTH_USERNAME}:${JOERN_SERVER_AUTH_PASSWORD}" \
+          -H "Content-Type: application/json" -d "$body" "$url" >/dev/null 2>&1; then
+          fail_count=0
+        else
+          fail_count=$((fail_count + 1))
+        fi
+      else
+        if curl -sf --connect-timeout 2 --max-time 5 \
+          -H "Content-Type: application/json" -d "$body" "$url" >/dev/null 2>&1; then
+          fail_count=0
+        else
+          fail_count=$((fail_count + 1))
+        fi
+      fi
+      if [ "$fail_count" -ge "$JOERN_WATCHDOG_FAIL_THRESHOLD" ]; then
+        echo "unified-entrypoint: watchdog: joern unresponsive (${fail_count} failures), triggering restart" >&2
+        exit 1
+      fi
+      sleep "$JOERN_WATCHDOG_INTERVAL_SEC"
+    done
+  ) &
+  WATCHDOG_PID="$!"
+  echo "unified-entrypoint: watchdog started pid=$WATCHDOG_PID" >&2
+  return 0
 }
 
 # --- bootstrap ---
 start_joern
 wait_for_joern_ready || exit 1
 start_proxy || exit 1
+start_watchdog || exit 1
 
 # --- supervise until Joern exits permanently (max restarts) ---
 while true; do
   if ! kill -0 "$JOERN_PID" >/dev/null 2>&1; then
     wait "$JOERN_PID" 2>/dev/null || true
+    restart_stack
+  fi
+  if [ -n "$WATCHDOG_PID" ] && ! kill -0 "$WATCHDOG_PID" >/dev/null 2>&1; then
+    wait "$WATCHDOG_PID" 2>/dev/null || true
+    echo "unified-entrypoint: watchdog exited, restarting stack" >&2
     restart_stack
   fi
   if [ -n "$PROXY_PID" ] && ! kill -0 "$PROXY_PID" >/dev/null 2>&1; then

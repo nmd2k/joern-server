@@ -154,19 +154,21 @@ def execute_repo_parse(
     tmp_src_dir = Path(tempfile.mkdtemp(prefix=f"joern-repo-{sample_id}-"))
     try:
         materialize_tree(files, tmp_src_dir)
-        try:
-            result = run_joern_parse(
-                state.settings.parse_bin,
-                tmp_src_dir,
-                cpg_out,
-                language=language,
-                timeout_sec=state.settings.parse_repo_timeout_sec,
-            )
-        except ParseTimeoutError as exc:
-            return finish(
-                HTTPStatus.GATEWAY_TIMEOUT,
-                json_error(str(exc), code="parse_timeout"),
-            )
+        with state.parse_semaphore:
+            try:
+                result = run_joern_parse(
+                    state.settings.parse_bin,
+                    tmp_src_dir,
+                    cpg_out,
+                    language=language,
+                    timeout_sec=state.settings.parse_repo_timeout_sec,
+                    jvm_xmx=state.settings.parse_jvm_xmx,
+                )
+            except ParseTimeoutError as exc:
+                return finish(
+                    HTTPStatus.GATEWAY_TIMEOUT,
+                    json_error(str(exc), code="parse_timeout"),
+                )
         http_status = HTTPStatus.OK if result.ok else HTTPStatus.BAD_GATEWAY
         body: dict[str, Any] = {
             "ok": result.ok,

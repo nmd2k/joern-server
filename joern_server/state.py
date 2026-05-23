@@ -20,6 +20,7 @@ class AppState:
     query_cache: Optional[LRUCache]
     cpg_registry: Optional[CPGRegistry]
     repl_semaphore: threading.Semaphore
+    parse_semaphore: threading.Semaphore
     affinity_cpg_path: dict[str, str] = field(default_factory=dict)
     active_affinity_key: Optional[str] = None
     active_cpg_path: Optional[str] = None
@@ -43,6 +44,7 @@ class AppState:
             settings.cpg_registry_path,
             archive_max_count=settings.cpg_archive_max_count,
             archive_max_gb=float(settings.cpg_archive_max_gb),
+            legacy_path=settings._cpg_registry_legacy_path,
         )
 
         return cls(
@@ -51,6 +53,7 @@ class AppState:
             query_cache=query_cache,
             cpg_registry=cpg_registry,
             repl_semaphore=threading.Semaphore(1),
+            parse_semaphore=threading.Semaphore(1),
         )
 
     @classmethod
@@ -77,6 +80,7 @@ class AppState:
             "health_probe_timeout_sec": 5,
             "query_cache_max_size": 100,
             "query_cache_ttl_sec": 300,
+            "parse_jvm_xmx": "2g",
         }
         defaults.update(overrides)
         settings = Settings(**defaults)  # type: ignore[arg-type]

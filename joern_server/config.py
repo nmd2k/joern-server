@@ -30,6 +30,7 @@ class Settings:
     health_probe_timeout_sec: int
     query_cache_max_size: int
     query_cache_ttl_sec: int
+    parse_jvm_xmx: str
 
     @property
     def internal_url(self) -> str:
@@ -37,6 +38,10 @@ class Settings:
 
     @property
     def cpg_registry_path(self) -> Path:
+        return Path(self.cpg_archive_dir) / "cpg-registry.json"
+
+    @property
+    def _cpg_registry_legacy_path(self) -> Path:
         return Path(self.cpg_out_dir).parent / "cpg-registry.json"
 
     @classmethod
@@ -63,4 +68,5 @@ class Settings:
             health_probe_timeout_sec=env_int("JOERN_HEALTH_PROBE_TIMEOUT_SEC", 5),
             query_cache_max_size=env_int("QUERY_CACHE_MAX_SIZE", 1000),
             query_cache_ttl_sec=env_int("QUERY_CACHE_TTL_SEC", 300),
+            parse_jvm_xmx=env_str("PARSE_JVM_XMX", "2g"),
         )

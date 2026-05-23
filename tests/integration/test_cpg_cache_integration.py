@@ -46,10 +46,8 @@ def test_full_registry_lifecycle(tmp_path):
     reg = CPGRegistry(registry_file)
     reg.register("abc", _entry(archive_dir, "sample-abc", "2026-01-01T00:00:00Z"))
 
-    # Verify the JSON file was written
+    # Verify the database file was written
     assert registry_file.exists()
-    raw = json.loads(registry_file.read_text())
-    assert "abc" in raw
 
     # Fresh instance from the same file should find the entry
     reg2 = CPGRegistry(registry_file)
@@ -183,7 +181,7 @@ def test_concurrent_registry_access(tmp_path):
 
 
 def test_atomic_save(tmp_path):
-    """Registry file is always valid JSON after save, even for large entries."""
+    """Large entries survive register and can be read back from a fresh instance."""
     registry_file = tmp_path / "reg.json"
     reg = CPGRegistry(registry_file)
 
@@ -195,10 +193,12 @@ def test_atomic_save(tmp_path):
 
     reg.register("big_hash", entry)
 
-    # File must be parseable JSON immediately after register (atomic rename via .tmp)
-    raw = registry_file.read_text(encoding="utf-8")
-    parsed = json.loads(raw)  # raises if not valid JSON
-    assert "big_hash" in parsed
+    # Fresh instance should find the entry with the large extra field intact
+    reg2 = CPGRegistry(registry_file)
+    result = reg2.lookup("big_hash")
+    assert result is not None
+    assert result["extra"] == large_value
+    assert result["archive_path"] == str(arch)
 
 
 def test_round_trip_encode_decode(tmp_path):

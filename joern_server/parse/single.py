@@ -69,6 +69,11 @@ def handle_parse(state: AppState, data: dict[str, Any]) -> tuple[int, dict[str, 
                         state.cpg_registry.register(source_hash, entry)
                         with state.sid_hash_lock:
                             state.sid_to_hash[sample_id] = source_hash
+                        meta_path = cpg_out / ".joern_hash"
+                        try:
+                            meta_path.write_text(source_hash, encoding="utf-8")
+                        except Exception:
+                            pass
                         return finish(
                             HTTPStatus.OK,
                             {
@@ -118,19 +123,21 @@ def handle_parse(state: AppState, data: dict[str, Any]) -> tuple[int, dict[str, 
     try:
         src_path = tmp_src_dir / Path(filename).name
         src_path.write_text(source_code, encoding="utf-8", newline="\n")
-        try:
-            result = run_joern_parse(
-                state.settings.parse_bin,
-                tmp_src_dir,
-                cpg_out,
-                language=language,
-                timeout_sec=state.settings.parse_timeout_sec,
-            )
-        except ParseTimeoutError as exc:
-            return finish(
-                HTTPStatus.GATEWAY_TIMEOUT,
-                json_error(str(exc), code="parse_timeout"),
-            )
+        with state.parse_semaphore:
+            try:
+                result = run_joern_parse(
+                    state.settings.parse_bin,
+                    tmp_src_dir,
+                    cpg_out,
+                    language=language,
+                    timeout_sec=state.settings.parse_timeout_sec,
+                    jvm_xmx=state.settings.parse_jvm_xmx,
+                )
+            except ParseTimeoutError as exc:
+                return finish(
+                    HTTPStatus.GATEWAY_TIMEOUT,
+                    json_error(str(exc), code="parse_timeout"),
+                )
         http_status = HTTPStatus.OK if result.ok else HTTPStatus.BAD_GATEWAY
         body: dict[str, Any] = {
             "ok": result.ok,
@@ -146,6 +153,11 @@ def handle_parse(state: AppState, data: dict[str, Any]) -> tuple[int, dict[str, 
         if result.ok:
             with state.sid_hash_lock:
                 state.sid_to_hash[sample_id] = source_hash
+            meta_path = cpg_out / ".joern_hash"
+            try:
+                meta_path.write_text(source_hash, encoding="utf-8")
+            except Exception:
+                pass
         return finish(http_status, body, lang=language or None)
     except Exception as exc:
         return finish(HTTPStatus.BAD_GATEWAY, json_error(str(exc), code="parse_failed"))

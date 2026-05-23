@@ -7,7 +7,7 @@ from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Optional
 
-from joern_server.cpg import cpg_copy, cpg_remove, cpg_size_bytes, safe_sample_id
+from joern_server.cpg import cpg_copy, cpg_remove, cpg_size_bytes, get_hash_lock, safe_sample_id
 from joern_server.parse.metrics import record_cleanup_request
 from joern_server.state import AppState
 from joern_server.upstream import joern as upstream
@@ -68,6 +68,13 @@ def handle_cleanup(
             with state.sid_hash_lock:
                 source_hash = state.sid_to_hash.get(sample_id)
             if source_hash is None:
+                hash_file = cpg_out / ".joern_hash"
+                try:
+                    if hash_file.exists():
+                        source_hash = hash_file.read_text(encoding="utf-8").strip()
+                except Exception:
+                    pass
+            if source_hash is None:
                 for h, entry in state.cpg_registry.all_entries():
                     if entry.get("sample_id") == sample_id:
                         source_hash = h
@@ -75,20 +82,29 @@ def handle_cleanup(
 
             if source_hash is not None:
                 archive_path = Path(state.settings.cpg_archive_dir) / source_hash
-                if archive_path.exists():
-                    cpg_remove(archive_path)
-                cpg_copy(cpg_out, archive_path)
-                size_bytes = cpg_size_bytes(archive_path)
-                now = datetime.datetime.utcnow().isoformat() + "Z"
-                state.cpg_registry.register(source_hash, {
-                    "archive_path": str(archive_path),
-                    "sample_id": sample_id,
-                    "archived_at": now,
-                    "last_used": now,
-                    "size_bytes": size_bytes,
-                })
+                hash_lock = get_hash_lock(source_hash)
+                with hash_lock:
+                    if archive_path.exists():
+                        size_bytes = cpg_size_bytes(archive_path)
+                    else:
+                        tmp_archive = archive_path.with_suffix(".tmp")
+                        if tmp_archive.exists():
+                            cpg_remove(tmp_archive)
+                        cpg_copy(cpg_out, tmp_archive)
+                        tmp_archive.rename(archive_path)
+                        size_bytes = cpg_size_bytes(archive_path)
+                    now = datetime.datetime.utcnow().isoformat() + "Z"
+                    state.cpg_registry.register(source_hash, {
+                        "archive_path": str(archive_path),
+                        "sample_id": sample_id,
+                        "archived_at": now,
+                        "last_used": now,
+                        "size_bytes": size_bytes,
+                    })
                 cpg_remove(cpg_out)
                 state.cpg_registry.evict_if_needed()
+                with state.sid_hash_lock:
+                    state.sid_to_hash.pop(sample_id, None)
                 clear_affinity_state(state, sample_id, request_headers=request_headers)
                 record_cleanup_request(state, status="200", archived=True)
                 return HTTPStatus.OK, {
@@ -103,6 +119,8 @@ def handle_cleanup(
 
         if existed:
             cpg_remove(cpg_out)
+        with state.sid_hash_lock:
+            state.sid_to_hash.pop(sample_id, None)
         clear_affinity_state(state, sample_id, request_headers=request_headers)
         record_cleanup_request(state, status="200", archived=False)
         return HTTPStatus.OK, {
