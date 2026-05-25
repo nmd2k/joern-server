@@ -10,7 +10,7 @@ from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Optional
 
-from joern_server.cpg import cpg_copy, cpg_remove, get_hash_lock, safe_sample_id
+from joern_server.cpg import cpg_copy, cpg_remove, get_hash_lock, joern_hash_sidecar, safe_sample_id
 from joern_server.parse.language import _default_filename, _normalize_language
 from joern_server.parse.metrics import record_parse_request
 from joern_server.parse.runner import ParseTimeoutError, run_joern_parse
@@ -75,7 +75,7 @@ def handle_parse(state: AppState, data: dict[str, Any]) -> tuple[int, dict[str, 
                             print(json.dumps({"component":"joern-proxy","event":"registry_register_error","error":str(exc)}), flush=True)
                         with state.sid_hash_lock:
                             state.sid_to_hash[sample_id] = source_hash
-                        meta_path = cpg_out / ".joern_hash"
+                        meta_path = joern_hash_sidecar(cpg_out)
                         try:
                             meta_path.write_text(source_hash, encoding="utf-8")
                         except Exception:
@@ -163,7 +163,7 @@ def handle_parse(state: AppState, data: dict[str, Any]) -> tuple[int, dict[str, 
         if result.ok:
             with state.sid_hash_lock:
                 state.sid_to_hash[sample_id] = source_hash
-            meta_path = cpg_out / ".joern_hash"
+            meta_path = joern_hash_sidecar(cpg_out)
             try:
                 meta_path.write_text(source_hash, encoding="utf-8")
             except Exception:

@@ -8,7 +8,14 @@ from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Optional
 
-from joern_server.cpg import cpg_copy, cpg_remove, cpg_size_bytes, get_hash_lock, safe_sample_id
+from joern_server.cpg import (
+    cpg_copy,
+    cpg_remove,
+    cpg_size_bytes,
+    get_hash_lock,
+    joern_hash_sidecar,
+    safe_sample_id,
+)
 from joern_server.parse.metrics import record_cleanup_request
 from joern_server.state import AppState
 from joern_server.upstream import joern as upstream
@@ -73,7 +80,7 @@ def handle_cleanup(
             with state.sid_hash_lock:
                 source_hash = state.sid_to_hash.get(sample_id)
             if source_hash is None:
-                hash_file = cpg_out / ".joern_hash"
+                hash_file = joern_hash_sidecar(cpg_out)
                 try:
                     if hash_file.exists():
                         source_hash = hash_file.read_text(encoding="utf-8").strip()
@@ -113,6 +120,7 @@ def handle_cleanup(
                     except Exception as exc:
                         print(json.dumps({"component":"joern-proxy","event":"registry_register_error","error":str(exc)}), flush=True)
                 cpg_remove(cpg_out)
+                cpg_remove(joern_hash_sidecar(cpg_out))
                 cpg_remove(Path(state.settings.cpg_out_dir).parent / ".joern-src" / sample_id)
                 try:
                     state.cpg_registry.evict_if_needed()
@@ -134,6 +142,7 @@ def handle_cleanup(
 
         if existed:
             cpg_remove(cpg_out)
+            cpg_remove(joern_hash_sidecar(cpg_out))
             cpg_remove(Path(state.settings.cpg_out_dir).parent / ".joern-src" / sample_id)
         with state.sid_hash_lock:
             state.sid_to_hash.pop(sample_id, None)

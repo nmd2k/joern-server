@@ -18,3 +18,8 @@ def sample_id_from_cpg_path(path: str) -> Optional[str]:
 def safe_sample_id(raw: str) -> str:
     safe = re.sub(r"[^a-zA-Z0-9._-]", "_", raw.strip())
     return safe or "sample"
+
+
+def joern_hash_sidecar(cpg_out: Path) -> Path:
+    """Path to source-hash sidecar for a CPG output path (file or directory)."""
+    return Path(str(cpg_out) + ".joern_hash")
