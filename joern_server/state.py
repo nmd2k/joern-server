@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,7 +50,7 @@ class AppState:
             archive_max_gb=float(settings.cpg_archive_max_gb),
         )
 
-        return cls(
+        state = cls(
             settings=settings,
             metrics=metrics if metrics is not None else PrometheusMetrics(),
             query_cache=query_cache,
@@ -57,6 +58,41 @@ class AppState:
             repl_semaphore=threading.Semaphore(1),
             parse_semaphore=threading.Semaphore(1),
         )
+        state._rebuild_sid_to_hash()
+        return state
+
+    def _rebuild_sid_to_hash(self) -> None:
+        """Scan .joern_hash sidecars in cpg-out to restore sid_to_hash after restart."""
+        from joern_server.cpg import joern_hash_sidecar
+
+        cpg_out_dir = Path(self.settings.cpg_out_dir)
+        if not cpg_out_dir.is_dir():
+            return
+        count = 0
+        try:
+            for item in cpg_out_dir.iterdir():
+                if item.name.startswith(".") or item.name.endswith(".joern_hash"):
+                    continue
+                sidecar = joern_hash_sidecar(item)
+                if sidecar.is_file():
+                    try:
+                        source_hash = sidecar.read_text(encoding="utf-8").strip()
+                        if source_hash and len(source_hash) == 64:
+                            self.sid_to_hash[item.name] = source_hash
+                            count += 1
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+        if count > 0:
+            print(
+                json.dumps({
+                    "component": "joern-proxy",
+                    "event": "sid_to_hash_rebuilt",
+                    "count": count,
+                }),
+                flush=True,
+            )
 
     @classmethod
     def for_test(cls, tmp_path: Path, **overrides: object) -> AppState:

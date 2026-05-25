@@ -99,6 +99,16 @@ def handle_parse(state: AppState, data: dict[str, Any]) -> tuple[int, dict[str, 
     if cpg_out.exists() and not overwrite:
         with state.sid_hash_lock:
             existing_hash = state.sid_to_hash.get(sample_id)
+        if existing_hash is None:
+            sidecar = joern_hash_sidecar(cpg_out)
+            try:
+                if sidecar.exists():
+                    existing_hash = sidecar.read_text(encoding="utf-8").strip()
+                    if existing_hash:
+                        with state.sid_hash_lock:
+                            state.sid_to_hash[sample_id] = existing_hash
+            except Exception:
+                existing_hash = None
         if existing_hash == source_hash:
             with state.sid_hash_lock:
                 state.sid_to_hash[sample_id] = source_hash
