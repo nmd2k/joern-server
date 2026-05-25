@@ -35,6 +35,7 @@ COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/joern-server-entrypoint.sh
 COPY --chmod=755 docker/healthcheck.sh /usr/local/bin/joern-healthcheck.sh
 COPY --chmod=755 docker/unified-entrypoint.sh /usr/local/bin/neuralatlas-unified-entrypoint.sh
 
+COPY --chown=joern:joern requirements.txt /app/requirements.txt
 COPY --chown=joern:joern joern_server /app/joern_server
 # COPY --chown=joern:joern playground /app/playground
 
@@ -44,7 +45,7 @@ COPY --chown=joern:joern joern_server /app/joern_server
 RUN mkdir -p /app/samples/c
 # COPY --chown=joern:joern samples/c/hello.cpg /app/samples/c/hello.cpg
 
-RUN python3 -m pip install --no-cache-dir "httpx>=0.27.0"
+RUN python3 -m pip install --no-cache-dir -r /app/requirements.txt
 
 USER joern
 WORKDIR /app

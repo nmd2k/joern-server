@@ -17,6 +17,45 @@ class PrometheusMetrics:
         self._hist_count: dict[tuple[str, tuple[tuple[str, str], ...]], float] = {}
         self._start_time = time.time()
 
+    @staticmethod
+    def _read_rss_bytes() -> float:
+        try:
+            with open("/proc/self/status") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        return float(int(line.split()[1]) * 1024)
+        except Exception:
+            pass
+        return 0.0
+
+    @staticmethod
+    def _read_cgroup_memory() -> tuple[float, float]:
+        usage = 0.0
+        limit = 0.0
+        for base in ("/sys/fs/cgroup",):
+            usage_path = os.path.join(base, "memory.current")
+            limit_path = os.path.join(base, "memory.max")
+            if not os.path.exists(usage_path):
+                usage_path = os.path.join(base, "memory", "memory.usage_in_bytes")
+                limit_path = os.path.join(base, "memory", "memory.limit_in_bytes")
+            try:
+                if os.path.exists(usage_path):
+                    with open(usage_path) as f:
+                        usage = float(f.read().strip())
+            except Exception:
+                pass
+            try:
+                if os.path.exists(limit_path):
+                    with open(limit_path) as f:
+                        raw = f.read().strip()
+                        if raw.isdigit():
+                            limit = float(raw)
+            except Exception:
+                pass
+            if usage > 0:
+                break
+        return usage, limit
+
     def inc(self, name: str, value: float = 1.0, labels: Optional[dict[str, str]] = None) -> None:
         key = (name, self._label_key(labels))
         with self._lock:
@@ -51,6 +90,11 @@ class PrometheusMetrics:
         hostname = os.getenv("HOSTNAME", "unknown")
         lines.append(f'joern_proxy_info{{host="{hostname}"}} 1')
         lines.append(f"joern_proxy_uptime_seconds {time.time() - self._start_time:.3f}")
+        lines.append(f'joern_proxy_memory_rss_bytes{{host="{hostname}"}} {self._read_rss_bytes()}')
+        cg_usage, cg_limit = self._read_cgroup_memory()
+        lines.append(f'joern_proxy_memory_container_usage_bytes{{host="{hostname}"}} {cg_usage}')
+        if cg_limit > 0:
+            lines.append(f'joern_proxy_memory_container_limit_bytes{{host="{hostname}"}} {cg_limit}')
 
         with self._lock:
             for (name, labels), val in sorted(self._counters.items()):

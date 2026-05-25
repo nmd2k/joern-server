@@ -1,4 +1,4 @@
-"""Unit tests for LRU query result caching in proxy.py."""
+"""Unit tests for LRU query result caching."""
 
 import threading
 import time
@@ -6,7 +6,7 @@ from collections import OrderedDict
 
 import pytest
 
-from joern_server.proxy import LRUCache
+from joern_server.cache.lru import LRUCache
 
 
 class TestLRUCache:

@@ -42,13 +42,14 @@ patch_container() {
     docker cp "$src" "$container:/app/$rel_path" 2>/dev/null || true
   done
 
-  # Restart the Python proxy (proxy.py) so it picks up joern_server/ changes.
-  PROXY_PID=$(docker exec "$container" pgrep -f "joern_server/proxy.py" 2>/dev/null || true)
+  # Restart uvicorn so it picks up joern_server/ changes.
+  PROXY_PID=$(docker exec "$container" pgrep -f "uvicorn.*joern_server.app:app" 2>/dev/null || true)
   if [ -n "$PROXY_PID" ]; then
     docker exec "$container" kill "$PROXY_PID" 2>/dev/null || true
     sleep 0.5
   fi
-  docker exec -d "$container" sh -c "JOERN_INTERNAL_HOST=127.0.0.1 python3 /app/joern_server/proxy.py"
+  docker exec -d "$container" sh -c \
+    "export JOERN_INTERNAL_HOST=127.0.0.1 PYTHONPATH=/app; uvicorn joern_server.app:app --host \${PROXY_HOST:-0.0.0.0} --port \${PROXY_PORT:-8080}"
 
   echo "  [done]  $container"
 }

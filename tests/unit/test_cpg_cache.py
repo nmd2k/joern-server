@@ -9,7 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from joern_server.proxy import CPGRegistry, _cpg_size_bytes, _get_hash_lock
+from joern_server.cpg.registry import CPGRegistry
+from joern_server.cpg.storage import cpg_size_bytes, get_hash_lock
 
 
 class TestCPGRegistry:
@@ -160,14 +161,14 @@ class TestCPGRegistry:
         d.mkdir()
         (d / "f1").write_bytes(b"hello")
         (d / "f2").write_bytes(b"world!")
-        assert _cpg_size_bytes(d) == 11
+        assert cpg_size_bytes(d) == 11
 
     def test_get_hash_lock_same_hash_same_lock(self):
-        lock1 = _get_hash_lock("samehash")
-        lock2 = _get_hash_lock("samehash")
+        lock1 = get_hash_lock("samehash")
+        lock2 = get_hash_lock("samehash")
         assert lock1 is lock2
 
     def test_get_hash_lock_different_hashes_different_locks(self):
-        lock1 = _get_hash_lock("hash_aaa")
-        lock2 = _get_hash_lock("hash_bbb")
+        lock1 = get_hash_lock("hash_aaa")
+        lock2 = get_hash_lock("hash_bbb")
         assert lock1 is not lock2

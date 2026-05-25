@@ -16,14 +16,21 @@ tests/
 │   ├── test_sticky_routing.py
 │   ├── test_lru_cache.py
 │   ├── test_cpg_cache.py
+│   ├── test_file_registry.py
+│   ├── test_drain.py
+│   ├── test_joern_restart.py
 │   ├── test_parse_repo.py
 │   └── test_graph_endpoints.py
 ├── integration/
 │   ├── test_joern_http_proxy.py       # Mock Joern subprocess
-│   └── test_haproxy_stickiness.py     # Live VIP (opt-in)
+│   ├── test_haproxy_stickiness.py     # Live VIP (opt-in)
+│   ├── test_file_cpg_cache_integration.py
+│   └── test_drain_haproxy.py          # Live drain + HAProxy redispatch (opt-in)
 └── stress/
     ├── test_joern_live_stress.py
-    └── test_session_lifecycle.py      # 250-session endurance (opt-in)
+    ├── test_session_lifecycle.py      # 250-session endurance (opt-in)
+    ├── test_primevul_stress.py        # PrimeVul JSONL parse + query (opt-in)
+    └── test_primevul_stress_v2.py     # PrimeVul v2 ingest (opt-in)
 ```
 
 Markers (`pytest.ini`):
@@ -54,10 +61,29 @@ pytest tests/stress/test_joern_live_stress.py -m integration -v
 NEURALATLAS_RUN_HAPROXY_TESTS=1 \
   pytest tests/integration/test_haproxy_stickiness.py -m integration -v
 
+# HAProxy drain + redispatch (staging: JOERN_ENABLE_DRAIN_TEST=1, >=3 replicas)
+./scripts/test_drain_live.sh
+
+# Or run pytest directly:
+NEURALATLAS_RUN_DRAIN_TESTS=1 \
+  pytest tests/integration/test_drain_haproxy.py -m integration -v
+
 # 250-session lifecycle (long; ensure stack healthy first)
 NEURALATLAS_STRESS_LIFECYCLE_SESSIONS=250 \
 NEURALATLAS_STRESS_LIFECYCLE_BATCH=8 \
   pytest tests/stress/test_session_lifecycle.py -m stress -v
+
+# PrimeVul JSONL: 200 samples, 5 threads, 4x cpg.method.name.l (2s apart)
+NEURALATLAS_PRIMEVUL_JSONL=/datadrive/data/raw/primevul/primevul_test_paired.jsonl \
+NEURALATLAS_STRESS_PRIMEVUL_LIMIT=200 \
+NEURALATLAS_STRESS_PRIMEVUL_WORKERS=5 \
+  pytest tests/stress/test_primevul_stress.py -m stress -v -s
+
+# PrimeVul v2: multi-worker ingest with cache-hit tracking
+NEURALATLAS_PRIMEVUL_V2_JSONL=/datadrive/data/raw/primevul/primevul_test_paired.jsonl \
+NEURALATLAS_STRESS_PRIMEVUL_V2_LIMIT=200 \
+NEURALATLAS_STRESS_PRIMEVUL_V2_WORKERS=5 \
+  pytest tests/stress/test_primevul_stress_v2.py -m stress -v -s
 ```
 
 ---
@@ -68,6 +94,9 @@ NEURALATLAS_STRESS_LIFECYCLE_BATCH=8 \
 |----------|---------|---------|
 | `NEURALATLAS_LIVE_JOERN_URL` | `http://127.0.0.1:8080` | Live / stress / HAProxy tests |
 | `NEURALATLAS_RUN_HAPROXY_TESTS` | `0` | Enable HAProxy integration tests |
+| `NEURALATLAS_RUN_DRAIN_TESTS` | `0` | Enable live drain + HAProxy redispatch test |
+| `NEURALATLAS_DRAIN_FLOOD_REQUESTS` | `40` | Parse requests during drain flood |
+| `NEURALATLAS_DRAIN_MIN_BACKENDS` | `3` | Minimum distinct `X-Served-By` backends before drain test |
 | `NEURALATLAS_HAPROXY_STICKY_REQUESTS` | `15` | Stickiness repeat count |
 | `NEURALATLAS_STRESS_SESSIONS` | `16` | Concurrent session stress |
 | `NEURALATLAS_STRESS_QUERIES_PER_SESSION` | `20` | Queries per session |
@@ -113,6 +142,20 @@ NEURALATLAS_RUN_HAPROXY_TESTS=1 pytest tests/integration/test_haproxy_stickiness
 ```
 
 Asserts identical `X-Served-By` for repeated requests with the same `X-Affinity-Key`.
+
+### Drain + HAProxy redispatch test
+
+Requires scale profile with **at least 3** backends visible through HAProxy (`X-Served-By`). One replica drains while new affinity keys must still get HTTP 200 through the VIP.
+
+```bash
+# deploy/.env — staging only
+JOERN_ENABLE_DRAIN_TEST=1
+
+docker compose -f deploy/compose.scale.yml --env-file deploy/.env up -d --scale joern=3
+./scripts/test_drain_live.sh
+```
+
+The script waits for the VIP and for HAProxy to see enough backends before running pytest. If you see HTML `503 Service Unavailable` from HAProxy, scale up or wait for replicas to finish restarting — that response means no backend was available, not an app-level drain error.
 
 ---
 
