@@ -173,11 +173,11 @@ sequenceDiagram
   Note over P: cleanup completes, no active CPG
   P->>P: cgroup RSS > JOERN_MEMORY_RESTART_MB
   P->>P: spawn staggered restart worker
-  P->>P: sleep random jitter (0–JOERN_RESTART_JITTER_SEC)
-  P->>P: re-check memory, probe HAProxy VIP health
-  P->>P: draining=true; reject new work (503)
-  P->>H: GET /health → 503 draining
-  H->>H: mark backend down; redispatch new keys
+  P->>P: sleep random jitter 0..JOERN_RESTART_JITTER_SEC
+  P->>P: re-check memory + probe HAProxy VIP health
+  P->>P: set draining=true, reject new work with 503
+  P->>H: GET /health returns 503 draining
+  H->>H: mark backend down, redispatch new keys
   P->>P: sleep JOERN_DRAIN_SEC
   P->>E: write /tmp/joern-restart.requested
   E->>E: restart Joern JVM + proxy
