@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from joern_server.util.env import env_int, env_str
+from joern_server.util.env import env_bool, env_int, env_str
 
 
 @dataclass(frozen=True)
@@ -31,6 +31,9 @@ class Settings:
     query_cache_max_size: int
     query_cache_ttl_sec: int
     parse_jvm_xmx: str
+    joern_memory_restart_mb: int
+    joern_drain_sec: int
+    enable_drain_test: bool
 
     @property
     def internal_url(self) -> str:
@@ -71,4 +74,7 @@ class Settings:
             query_cache_max_size=env_int("QUERY_CACHE_MAX_SIZE", 1000),
             query_cache_ttl_sec=env_int("QUERY_CACHE_TTL_SEC", 300),
             parse_jvm_xmx=env_str("PARSE_JVM_XMX", "2g"),
+            joern_memory_restart_mb=env_int("JOERN_MEMORY_RESTART_MB", 3072),
+            joern_drain_sec=env_int("JOERN_DRAIN_SEC", 7),
+            enable_drain_test=env_bool("JOERN_ENABLE_DRAIN_TEST", False),
         )

@@ -26,6 +26,9 @@ class AppState:
     active_cpg_path: Optional[str] = None
     sid_to_hash: dict[str, str] = field(default_factory=dict)
     sid_hash_lock: threading.Lock = field(default_factory=threading.Lock)
+    draining: bool = False
+    restart_scheduled: bool = False
+    drain_lock: threading.Lock = field(default_factory=threading.Lock)
 
     @property
     def internal_url(self) -> str:
@@ -80,6 +83,9 @@ class AppState:
             "query_cache_max_size": 100,
             "query_cache_ttl_sec": 300,
             "parse_jvm_xmx": "2g",
+            "joern_memory_restart_mb": 0,
+            "joern_drain_sec": 0,
+            "enable_drain_test": False,
         }
         defaults.update(overrides)
         settings = Settings(**defaults)  # type: ignore[arg-type]

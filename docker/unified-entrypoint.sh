@@ -29,6 +29,7 @@ JOERN_RESTART_COUNT=0
 
 JOERN_WATCHDOG_INTERVAL_SEC="${JOERN_WATCHDOG_INTERVAL_SEC:-5}"
 JOERN_WATCHDOG_FAIL_THRESHOLD="${JOERN_WATCHDOG_FAIL_THRESHOLD:-3}"
+JOERN_RESTART_FLAG="${JOERN_RESTART_FLAG_PATH:-/tmp/joern-restart.requested}"
 
 if [ ! -x "$JOERN_BIN" ]; then
   echo "unified-entrypoint: joern binary not found at $JOERN_BIN" >&2
@@ -86,6 +87,8 @@ start_joern() {
     "$JOERN_BIN" \
       "-J-Xmx${XMX}" \
       "-J-XX:+UseContainerSupport" \
+      "-J-XX:+UseG1GC" \
+      "-J-XX:G1PeriodicGCInterval=5000" \
       "-J-XX:MaxHeapFreeRatio=30" \
       "-J-XX:MinHeapFreeRatio=10" \
       --server \
@@ -99,6 +102,8 @@ start_joern() {
     "$JOERN_BIN" \
       "-J-Xmx${XMX}" \
       "-J-XX:+UseContainerSupport" \
+      "-J-XX:+UseG1GC" \
+      "-J-XX:G1PeriodicGCInterval=5000" \
       "-J-XX:MaxHeapFreeRatio=30" \
       "-J-XX:MinHeapFreeRatio=10" \
       --server \
@@ -224,6 +229,12 @@ while true; do
   if [ -n "$PROXY_PID" ] && ! kill -0 "$PROXY_PID" >/dev/null 2>&1; then
     echo "unified-entrypoint: proxy died, exiting" >&2
     exit 1
+  fi
+  if [ -f "$JOERN_RESTART_FLAG" ]; then
+    reason="$(cat "$JOERN_RESTART_FLAG" 2>/dev/null || echo 'unknown')"
+    rm -f "$JOERN_RESTART_FLAG"
+    echo "unified-entrypoint: joern restart requested ($reason)" >&2
+    restart_stack
   fi
   sleep 2
 done

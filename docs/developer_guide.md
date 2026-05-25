@@ -40,20 +40,23 @@ joern_server/
 ├── metrics.py             # Prometheus text helpers
 ├── api/
 │   ├── deps.py            # get_state() FastAPI dependency
+│   ├── middleware/
+│   │   └── drain.py       # 503 while replica drains
 │   └── routers/
 │       ├── health.py      # GET /health, /version, /metrics, /cache-metrics
 │       ├── query.py       # POST /query-sync
 │       ├── parse.py       # POST /parse
 │       ├── parse_repo.py  # POST /parse/repo, /parse/repo/upload
 │       ├── graph.py       # POST /graph/{cfg,dfg,ddg,pdg,ast}
-│       └── cleanup.py     # POST /cleanup
+│       ├── cleanup.py     # POST /cleanup
+│       └── debug.py       # Staging drain test hooks
 ├── parse/                 # single.py, repo.py, runner.py, language.py, …
 ├── graph/                 # service.py, dot.py, scala_parse.py, …
-├── cpg/                   # registry.py, storage.py, paths.py
+├── cpg/                   # file_registry.py, registry.py, storage.py, paths.py
 ├── cache/                 # lru.py, query_policy.py
 ├── session/               # affinity.py, repl_lock.py
 ├── upstream/              # joern.py — httpx to internal Joern :18080
-├── lifecycle/             # cleanup.py
+├── lifecycle/             # cleanup.py, drain.py, joern_restart.py
 └── util/                  # headers, errors, env, query helpers
 ```
 

@@ -22,6 +22,16 @@ def health(
     state: AppState = Depends(get_state),
 ) -> JSONResponse:
     t0 = __import__("time").perf_counter()
+    if state.draining:
+        payload: dict[str, Any] = {
+            "ok": False,
+            "joern_ok": False,
+            "joern_http_ok": False,
+            "latency_ms": 0,
+            "draining": True,
+        }
+        return JSONResponse(status_code=HTTPStatus.SERVICE_UNAVAILABLE, content=payload)
+
     http_ok = upstream.check_joern_tcp(
         state.settings.internal_host,
         state.settings.internal_port,

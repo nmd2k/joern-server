@@ -125,7 +125,7 @@ Optional: `X-Request-Id` for correlation (returned on error responses).
 
 Parse runs `joern-parse` in a **subprocess** (not under `repl_semaphore`). Any replica can parse; output is visible on all replicas via the shared **`cpg-out`** volume.
 
-**Parse deduplication:** `CPGRegistry` (SQLite, WAL mode) keys archives by `source_hash` (SHA-256 of source). Cache hits copy from `cpg-archive` to `cpg-out`. All replicas share the same SQLite file via the `cpg-archive` volume.
+**Parse deduplication:** `FileCPGRegistry` keys archives by `source_hash` (SHA-256 of source). Supports flat-file and directory CPG layouts under `cpg-archive/`. Cache hits copy from archive to `cpg-out`. All replicas share the same archive volume.
 
 ---
 
@@ -134,7 +134,7 @@ Parse runs `joern-parse` in a **subprocess** (not under `repl_semaphore`). Any r
 | Path | Scope | Purpose |
 |------|-------|---------|
 | `/workspace/cpg-out/<sample_id>/` | Shared volume | Built CPG directories |
-| `/workspace/cpg-archive/` | Shared volume | Archived CPGs by `source_hash` + `cpg-registry.json` SQLite DB |
+| `/workspace/cpg-archive/` | Shared volume | Archived CPGs by `source_hash` (flat file or directory + `.meta.json`) |
 | `/workspace/repo-uploads/<upload_id>/` | Shared volume | Staged uploads (TTL) |
 | `_affinity_cpg_path` | Per replica (RAM) | Affinity key → last successful `importCpg` path |
 
@@ -152,9 +152,41 @@ importCpg("/workspace/cpg-out/my-sample")
 
 1. Delete or archive files under `cpg-out/<sample_id>` (optional `archive: true`).
 2. Remove matching entries from `_affinity_cpg_path`.
-3. Best-effort `close` on the REPL if that CPG was active.
+3. Best-effort `close` on the REPL if that CPG was active; clears proxy active-CPG state on success.
+4. If no CPG remains loaded and container memory exceeds `JOERN_MEMORY_RESTART_MB`, schedule **drain + Joern JVM restart** to reclaim retained heap.
 
 After cleanup, run `importCpg` again before further queries.
+
+---
+
+## Drain and JVM restart
+
+Joern retains heap after `close`; long-running replicas can grow to the cgroup limit even with no active CPG. The entrypoint supervises restarts:
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant H as HAProxy
+  participant P as joern_server
+  participant E as unified-entrypoint
+
+  Note over P: cleanup completes, no active CPG
+  P->>P: cgroup RSS > JOERN_MEMORY_RESTART_MB
+  P->>P: draining=true; reject new work (503)
+  P->>H: GET /health → 503 draining
+  H->>H: mark backend down; redispatch new keys
+  P->>P: sleep JOERN_DRAIN_SEC
+  P->>E: write /tmp/joern-restart.requested
+  E->>E: restart Joern JVM + proxy
+```
+
+| Phase | Client impact (via HAProxy) |
+|-------|----------------------------|
+| Drain starts | New sessions with new `X-Affinity-Key` retried on other replicas |
+| Same affinity key on draining replica | 503 JSON `replica_draining` until restart completes |
+| After restart | Replica re-joins pool when `/health` returns 200 |
+
+Staging-only: `POST /debug/drain` triggers the same cycle when `JOERN_ENABLE_DRAIN_TEST=1`.
 
 ---
 
@@ -174,7 +206,7 @@ Example: 8 parallel sessions on 10 replicas ≈ low queue depth if affinity keys
 
 | Endpoint | Behavior |
 |----------|----------|
-| `GET /health` | TCP probe by default; `?deep=true` overlays a CPGQL health query against Joern |
+| `GET /health` | TCP probe by default; `?deep=true` overlays a CPGQL health query against Joern; **503** with `"draining": true` while replica drains |
 | `GET /health?deep=true` | Returns `joern_http_ok`, `joern_repl_ok`, `repl_latency_ms`, `repl_error` |
 | `GET /metrics` | Prometheus text format (`joern_proxy_*`) |
 | `POST /cache-metrics` | LRU stats when query cache enabled (POST, not GET) |
@@ -210,11 +242,12 @@ Details: [API reference](api_reference.md), [Query guide](query_guide.md).
 | `joern_server/api/routers/` | HTTP routes (thin handlers) |
 | `joern_server/parse/` | Single/repo parse, language aliases, subprocess runner |
 | `joern_server/graph/` | CFG/DFG/DDG/PDG/AST extraction |
-| `joern_server/cpg/` | SQLite-backed registry, storage, path helpers |
+| `joern_server/cpg/` | File-based registry, storage, path helpers |
 | `joern_server/cache/` | LRU query cache |
 | `joern_server/session/` | Affinity map, REPL lock |
 | `joern_server/upstream/` | httpx calls to Joern `:18080` |
-| `joern_server/lifecycle/` | Cleanup orchestration |
+| `joern_server/lifecycle/` | Cleanup, drain, memory-triggered JVM restart |
+| `joern_server/api/middleware/` | Drain middleware (503 while replica drains) |
 | `joern_server/client.py` | `JoernHTTPQueryExecutor` for callers |
 
 See [Developer guide — Package layout](developer_guide.md#package-layout) for the full tree.

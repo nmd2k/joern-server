@@ -10,12 +10,14 @@ from typing import Any, Optional
 
 from joern_server.cpg import (
     cpg_copy,
+    cpg_paths_equal,
     cpg_remove,
     cpg_size_bytes,
     get_hash_lock,
     joern_hash_sidecar,
     safe_sample_id,
 )
+from joern_server.lifecycle.joern_restart import maybe_request_joern_restart_after_cleanup
 from joern_server.parse.metrics import record_cleanup_request
 from joern_server.state import AppState
 from joern_server.upstream import joern as upstream
@@ -26,15 +28,25 @@ def clear_affinity_state(state: AppState, sample_id: str, *, request_headers: di
     """Drop in-memory CPG binding for sample_id and best-effort close REPL graph."""
     cpg_out = Path(state.settings.cpg_out_dir) / sample_id
     target = str(cpg_out)
+    removed_paths: list[str] = []
     to_remove: list[str] = []
     for key, path in list(state.affinity_cpg_path.items()):
-        if key == sample_id or path.rstrip("/") == target.rstrip("/"):
+        if key == sample_id or cpg_paths_equal(path, target):
             to_remove.append(key)
+            removed_paths.append(path)
     for key in to_remove:
         state.affinity_cpg_path.pop(key, None)
 
     active_path = state.active_cpg_path
-    if active_path and active_path.rstrip("/") == target.rstrip("/"):
+    should_close = (
+        active_path is not None
+        and (
+            state.active_affinity_key == sample_id
+            or cpg_paths_equal(active_path, target)
+            or any(cpg_paths_equal(active_path, p) for p in removed_paths)
+        )
+    )
+    if should_close:
         with state.repl_semaphore:
             try:
                 upstream.post_query_sync(
@@ -57,6 +69,8 @@ def clear_affinity_state(state: AppState, sample_id: str, *, request_headers: di
             "joern_proxy_active_cpg_loaded",
             1.0 if state.active_cpg_path is not None else 0.0,
         )
+
+    maybe_request_joern_restart_after_cleanup(state, sample_id=sample_id)
 
 
 def handle_cleanup(

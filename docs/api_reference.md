@@ -34,11 +34,17 @@ Deep health check. By default runs a TCP connectivity check against internal Joe
 {"ok": true, "joern_ok": true, "joern_http_ok": true, "joern_repl_ok": true, "latency_ms": 5, "repl_latency_ms": 30}
 ```
 
-**503** — Joern unreachable
+**503** — Joern unreachable or replica **draining** (before JVM restart):
 
 ```json
 {"ok": false, "joern_ok": false, "joern_http_ok": false, "latency_ms": 5, "error": "..."}
 ```
+
+```json
+{"ok": false, "joern_ok": false, "joern_http_ok": false, "latency_ms": 0, "draining": true}
+```
+
+While draining, other routes (except `/health`, `/metrics`, `/debug/drain/enabled`) return **503** with `code: replica_draining`. HAProxy should mark the backend down and redispatch new `X-Affinity-Key` sessions to other replicas.
 
 ---
 
@@ -167,7 +173,33 @@ Returns `{nodes, edges, metadata, method_full_name}`.
 }
 ```
 
-Also clears in-memory affinity state for that `sample_id` on the handling replica.
+Also clears in-memory affinity state for that `sample_id` on the handling replica. When no CPG remains loaded and container memory exceeds `JOERN_MEMORY_RESTART_MB`, may schedule drain and Joern JVM restart on that replica.
+
+---
+
+### Debug (staging only)
+
+Not in OpenAPI schema. Disabled unless `JOERN_ENABLE_DRAIN_TEST=1` (keep **0** in production).
+
+#### `GET /debug/drain/enabled`
+
+**200**
+
+```json
+{"enabled": true}
+```
+
+#### `POST /debug/drain`
+
+Starts drain + supervised JVM restart on the handling replica (sticky via `X-Affinity-Key`).
+
+**200**
+
+```json
+{"ok": true, "draining": true, "scheduled": true, "drain_sec": 7}
+```
+
+**404** when `JOERN_ENABLE_DRAIN_TEST=0`.
 
 ---
 
@@ -193,6 +225,7 @@ Routers are registered in `joern_server.app.create_app()`:
 | `joern_server.api.routers.parse_repo` | `POST /parse/repo`, `/parse/repo/upload` |
 | `joern_server.api.routers.graph` | `POST /graph/cfg`, `/graph/dfg`, `/graph/ddg`, `/graph/pdg`, `/graph/ast` |
 | `joern_server.api.routers.cleanup` | `POST /cleanup` |
+| `joern_server.api.routers.debug` | `GET /debug/drain/enabled`, `POST /debug/drain` (staging) |
 
 ---
 

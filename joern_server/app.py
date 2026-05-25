@@ -9,7 +9,9 @@ from typing import Optional
 
 from fastapi import FastAPI
 
+from joern_server.api.middleware.drain import DrainMiddleware
 from joern_server.api.routers.cleanup import router as cleanup_router
+from joern_server.api.routers.debug import router as debug_router
 from joern_server.api.routers.graph import router as graph_router
 from joern_server.api.routers.health import router as health_router
 from joern_server.api.routers.parse import router as parse_router
@@ -64,12 +66,14 @@ def create_app(state: Optional[AppState] = None) -> FastAPI:
     app = FastAPI(title="Joern Server", lifespan=_lifespan)
     if state is not None:
         app.state.app_state = state
+    app.add_middleware(DrainMiddleware)
     app.include_router(health_router)
     app.include_router(query_router)
     app.include_router(parse_router)
     app.include_router(parse_repo_router)
     app.include_router(graph_router)
     app.include_router(cleanup_router)
+    app.include_router(debug_router)
     return app
 
 
