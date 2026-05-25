@@ -18,7 +18,11 @@ from joern_server.cache.query_policy import (
     query_hash,
     should_cache,
 )
-from joern_server.session.affinity import activate_cpg, record_import_cpg_success
+from joern_server.session.affinity import (
+    activate_cpg,
+    clear_active_cpg_state,
+    record_import_cpg_success,
+)
 from joern_server.session.repl_lock import repl_lock
 from joern_server.state import AppState
 from joern_server.upstream import joern as upstream
@@ -171,6 +175,10 @@ async def query_sync(request: Request, state: AppState = Depends(get_state)) -> 
 
         if query_class == "importCpg" and out_status == 200:
             record_import_cpg_success(state, affinity_key, query_str)
+
+        is_close_query = query_class == "close" or query_str.strip() == "close"
+        if is_close_query and out_status == 200 and success is True:
+            clear_active_cpg_state(state, closed_path=state.active_cpg_path)
 
         _log_event(
             request,

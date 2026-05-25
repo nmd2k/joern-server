@@ -91,6 +91,30 @@ def activate_cpg(
     return True, None
 
 
+def clear_active_cpg_state(
+    state: AppState,
+    *,
+    closed_path: Optional[str] = None,
+) -> None:
+    """Clear proxy REPL tracking after a successful ``close`` query."""
+    path = closed_path if closed_path is not None else state.active_cpg_path
+    if path is not None:
+        norm = path.rstrip("/")
+        for key, mapped in list(state.affinity_cpg_path.items()):
+            if mapped.rstrip("/") == norm:
+                state.affinity_cpg_path.pop(key, None)
+
+    state.active_cpg_path = None
+    state.active_affinity_key = None
+
+    if state.metrics is not None:
+        state.metrics.set_gauge("joern_proxy_active_cpg_loaded", 0.0)
+        state.metrics.set_gauge(
+            "joern_proxy_affinity_map_size",
+            float(len(state.affinity_cpg_path)),
+        )
+
+
 def record_import_cpg_success(
     state: AppState,
     affinity_key: str,
