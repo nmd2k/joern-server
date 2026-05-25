@@ -121,6 +121,9 @@ class AppState:
             "parse_jvm_xmx": "2g",
             "joern_memory_restart_mb": 0,
             "joern_drain_sec": 0,
+            "joern_restart_jitter_sec": 0,
+            "joern_restart_min_peers": 2,
+            "joern_haproxy_vip": "",
             "enable_drain_test": False,
         }
         defaults.update(overrides)

@@ -14,9 +14,9 @@ def is_draining(state: AppState) -> bool:
 
 
 def begin_draining(state: AppState) -> bool:
-    """Mark replica as draining. Returns False if already draining or restart scheduled."""
+    """Mark replica as draining. Returns False if already draining."""
     with state.drain_lock:
-        if state.draining or state.restart_scheduled:
+        if state.draining:
             return False
         state.draining = True
         state.restart_scheduled = True

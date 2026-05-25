@@ -39,6 +39,9 @@ services:
       QUERY_CACHE_MAX_SIZE: "${QUERY_CACHE_MAX_SIZE:-0}"
       JOERN_MEMORY_RESTART_MB: "${JOERN_MEMORY_RESTART_MB:-3072}"
       JOERN_DRAIN_SEC: "${JOERN_DRAIN_SEC:-7}"
+      JOERN_RESTART_JITTER_SEC: "${JOERN_RESTART_JITTER_SEC:-30}"
+      JOERN_RESTART_MIN_PEERS: "${JOERN_RESTART_MIN_PEERS:-2}"
+      JOERN_HAPROXY_VIP: "${JOERN_HAPROXY_VIP:-http://joern-haproxy:8080}"
       JOERN_ENABLE_DRAIN_TEST: "${JOERN_ENABLE_DRAIN_TEST:-0}"
     ulimits:
       nofile:
@@ -65,6 +68,7 @@ services:
     container_name: joern-haproxy
     ports:
       - "${JOERN_HTTP_PORT:-8080}:8080"
+      - "${HAPROXY_STATS_PORT:-8404}:8404"
     volumes:
       - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     networks:

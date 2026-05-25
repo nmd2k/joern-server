@@ -33,6 +33,9 @@ class Settings:
     parse_jvm_xmx: str
     joern_memory_restart_mb: int
     joern_drain_sec: int
+    joern_restart_jitter_sec: int
+    joern_restart_min_peers: int
+    joern_haproxy_vip: str
     enable_drain_test: bool
 
     @property
@@ -76,5 +79,8 @@ class Settings:
             parse_jvm_xmx=env_str("PARSE_JVM_XMX", "2g"),
             joern_memory_restart_mb=env_int("JOERN_MEMORY_RESTART_MB", 3072),
             joern_drain_sec=env_int("JOERN_DRAIN_SEC", 7),
+            joern_restart_jitter_sec=env_int("JOERN_RESTART_JITTER_SEC", 30),
+            joern_restart_min_peers=env_int("JOERN_RESTART_MIN_PEERS", 2),
+            joern_haproxy_vip=env_str("JOERN_HAPROXY_VIP", "http://joern-haproxy:8080"),
             enable_drain_test=env_bool("JOERN_ENABLE_DRAIN_TEST", False),
         )

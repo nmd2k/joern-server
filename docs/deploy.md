@@ -66,6 +66,25 @@ HAProxy (`deploy/haproxy.cfg`) uses `retry-on 503`, `option redispatch`, and `re
 
 If HAProxy has no healthy backend, clients see its default HTML 503 (`No server is available…`) — not the app JSON. That usually means too few replicas are up or a recent restart has not finished.
 
+### Staggered restart (thundering-herd prevention)
+
+Under uniform load, all replicas grow memory at similar rates and may cross `JOERN_MEMORY_RESTART_MB` at nearly the same time. Without coordination, they all drain and restart simultaneously, leaving zero healthy backends.
+
+To prevent this, the restart mechanism uses **random jitter + HAProxy VIP health gating**:
+
+1. When a replica crosses the memory threshold after cleanup, it waits a random delay (0 to `JOERN_RESTART_JITTER_SEC`, default **30s**).
+2. After the jitter, it re-checks memory — if it dropped below threshold (e.g. due to GC), the restart is cancelled.
+3. It probes the HAProxy VIP (`JOERN_HAPROXY_VIP`) to verify the cluster is healthy. If the VIP returns non-200, the restart is deferred to the next cleanup cycle.
+4. Only if all checks pass does the replica enter drain mode.
+
+This ensures restarts are naturally staggered across time, and no replica will restart if the cluster is already degraded.
+
+Deferred restarts are tracked by the `joern_proxy_restart_deferred_total` counter (labels: `jitter_memory_recovered`, `cpg_loaded_during_jitter`, `cluster_degraded`).
+
+### HAProxy stats
+
+The stats page is available at `http://localhost:8404/stats` (auto-refresh 5s). It shows backend health, active sessions, and server state transitions — useful for debugging drain/restart events.
+
 Recreate HAProxy after changing `haproxy.cfg`:
 
 ```bash
@@ -165,6 +184,7 @@ Scraped from `GET /metrics` on each replica. Counter names are exported with a `
 | `joern_proxy_cleanup_requests_total` | Counter | `status`, `archived` | Cleanup requests (`POST /cleanup`); `archived` is `true` when the request archived the CPG instead of deleting it |
 | `joern_proxy_draining` | Gauge | — | `1` while replica is draining before JVM restart |
 | `joern_proxy_joern_restart_requests_total` | Counter | `reason` | Scheduled JVM restarts (e.g. `memory_threshold`) |
+| `joern_proxy_restart_deferred_total` | Counter | `reason` | Restarts deferred by staggered restart logic (`jitter_memory_recovered`, `cpg_loaded_during_jitter`, `cluster_degraded`) |
 
 Existing query-sync metrics (`joern_proxy_query_sync_requests_total`, `joern_proxy_query_sync_duration_seconds_*`) are unchanged.
 
@@ -180,6 +200,9 @@ See `deploy/.env.example`. Important keys:
 | `JOERN_MEMORY_LIMIT` | `8g` (scale compose) | Docker cgroup cap (Joern + proxy + `joern-parse` child) |
 | `JOERN_MEMORY_RESTART_MB` | `3072` | After cleanup with no active CPG, restart Joern when container RSS exceeds this; `0` disables |
 | `JOERN_DRAIN_SEC` | `7` | Wait before JVM restart so HAProxy marks replica down |
+| `JOERN_RESTART_JITTER_SEC` | `30` | Max random delay before committing to drain+restart (thundering-herd prevention) |
+| `JOERN_RESTART_MIN_PEERS` | `2` | Minimum healthy backends required before allowing a restart |
+| `JOERN_HAPROXY_VIP` | `http://joern-haproxy:8080` | HAProxy VIP URL for cluster health gating; empty string disables the gate |
 | `JOERN_ENABLE_DRAIN_TEST` | `0` | `1` exposes `POST /debug/drain` for staging tests only |
 | `JOERN_INTERNAL_PORT` | `18080` | Joern HTTP server |
 | `JOERN_QUERY_TIMEOUT_SEC` | `600` | Proxy → Joern timeout |

@@ -156,3 +156,4 @@ NEURALATLAS_RUN_DRAIN_TESTS=1 pytest tests/integration/test_drain_haproxy.py -m 
 3. **Optional: archive at parse time** — currently only `cleanup(archive=true)` populates the file archive; archiving immediately after parse would make the registry more useful
 4. **Optional: `JOERN_RESTART_ON_EVERY_CLEANUP=1`** — for aggressive scanning where memory grows fast; not implemented yet
 5. **Volume cleanup** — legacy `cpg-out` flat files from old deployments still present (6,000+ entries)
+6. ~~**Thundering-herd restarts**~~ — **Fixed** in [staggered_restart.md](staggered_restart.md): added random jitter + HAProxy VIP health gating to prevent simultaneous restarts across replicas

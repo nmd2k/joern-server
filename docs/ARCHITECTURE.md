@@ -172,6 +172,9 @@ sequenceDiagram
 
   Note over P: cleanup completes, no active CPG
   P->>P: cgroup RSS > JOERN_MEMORY_RESTART_MB
+  P->>P: spawn staggered restart worker
+  P->>P: sleep random jitter (0–JOERN_RESTART_JITTER_SEC)
+  P->>P: re-check memory, probe HAProxy VIP health
   P->>P: draining=true; reject new work (503)
   P->>H: GET /health → 503 draining
   H->>H: mark backend down; redispatch new keys
@@ -179,6 +182,8 @@ sequenceDiagram
   P->>E: write /tmp/joern-restart.requested
   E->>E: restart Joern JVM + proxy
 ```
+
+Under uniform load, multiple replicas cross the memory threshold at similar times. To prevent thundering-herd restarts (all draining simultaneously, leaving zero healthy backends), each replica introduces random jitter and checks HAProxy VIP health before committing to drain. See [Deployment — Staggered restart](deploy.md#staggered-restart-thundering-herd-prevention).
 
 | Phase | Client impact (via HAProxy) |
 |-------|----------------------------|
