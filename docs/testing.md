@@ -24,7 +24,8 @@ tests/
 └── stress/
     ├── test_joern_live_stress.py
     ├── test_session_lifecycle.py      # 250-session endurance (opt-in)
-    └── test_primevul_stress.py        # PrimeVul JSONL parse + query (opt-in)
+    ├── test_primevul_stress.py        # PrimeVul JSONL parse + query (opt-in)
+    └── test_primevul_stress_v2.py     # PrimeVul v2 ingest (opt-in)
 ```
 
 Markers (`pytest.ini`):
@@ -65,6 +66,12 @@ NEURALATLAS_PRIMEVUL_JSONL=/datadrive/data/raw/primevul/primevul_test_paired.jso
 NEURALATLAS_STRESS_PRIMEVUL_LIMIT=200 \
 NEURALATLAS_STRESS_PRIMEVUL_WORKERS=5 \
   pytest tests/stress/test_primevul_stress.py -m stress -v -s
+
+# PrimeVul v2: multi-worker ingest with cache-hit tracking
+NEURALATLAS_PRIMEVUL_V2_JSONL=/datadrive/data/raw/primevul/primevul_test_paired.jsonl \
+NEURALATLAS_STRESS_PRIMEVUL_V2_LIMIT=200 \
+NEURALATLAS_STRESS_PRIMEVUL_V2_WORKERS=5 \
+  pytest tests/stress/test_primevul_stress_v2.py -m stress -v -s
 ```
 
 ---

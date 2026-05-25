@@ -103,7 +103,21 @@ async def query_sync(request: Request, state: AppState = Depends(get_state)) -> 
                 return JSONResponse(status_code=HTTPStatus.OK, content=cached_result)
 
         with repl_lock(state.repl_semaphore):
-            if query_class != "importCpg":
+            if query_class == "importCpg":
+                if state.active_cpg_path is not None:
+                    try:
+                        upstream.post_query_sync(
+                            state.internal_url,
+                            query="close",
+                            headers=headers,
+                            timeout_sec=min(30.0, state.settings.query_timeout_sec),
+                        )
+                    except Exception:
+                        pass
+                    state.active_cpg_path = None
+                    if state.metrics is not None:
+                        state.metrics.set_gauge("joern_proxy_active_cpg_loaded", 0.0)
+            else:
                 ok, activate_err = activate_cpg(
                     state,
                     affinity_key,

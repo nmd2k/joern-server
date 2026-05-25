@@ -86,6 +86,8 @@ start_joern() {
     "$JOERN_BIN" \
       "-J-Xmx${XMX}" \
       "-J-XX:+UseContainerSupport" \
+      "-J-XX:MaxHeapFreeRatio=30" \
+      "-J-XX:MinHeapFreeRatio=10" \
       --server \
       --server-host "$JOERN_SERVER_HOST" \
       --server-port "$JOERN_INTERNAL_PORT" \
@@ -97,6 +99,8 @@ start_joern() {
     "$JOERN_BIN" \
       "-J-Xmx${XMX}" \
       "-J-XX:+UseContainerSupport" \
+      "-J-XX:MaxHeapFreeRatio=30" \
+      "-J-XX:MinHeapFreeRatio=10" \
       --server \
       --server-host "$JOERN_SERVER_HOST" \
       --server-port "$JOERN_INTERNAL_PORT" \

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import json
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Optional
@@ -45,6 +46,10 @@ def clear_affinity_state(state: AppState, sample_id: str, *, request_headers: di
             "joern_proxy_affinity_map_size",
             float(len(state.affinity_cpg_path)),
         )
+        state.metrics.set_gauge(
+            "joern_proxy_active_cpg_loaded",
+            1.0 if state.active_cpg_path is not None else 0.0,
+        )
 
 
 def handle_cleanup(
@@ -75,10 +80,13 @@ def handle_cleanup(
                 except Exception:
                     pass
             if source_hash is None:
-                for h, entry in state.cpg_registry.all_entries():
-                    if entry.get("sample_id") == sample_id:
-                        source_hash = h
-                        break
+                try:
+                    for h, entry in state.cpg_registry.all_entries():
+                        if entry.get("sample_id") == sample_id:
+                            source_hash = h
+                            break
+                except Exception as exc:
+                    print(json.dumps({"component":"joern-proxy","event":"registry_all_entries_error","error":str(exc)}), flush=True)
 
             if source_hash is not None:
                 archive_path = Path(state.settings.cpg_archive_dir) / source_hash
@@ -94,15 +102,22 @@ def handle_cleanup(
                         tmp_archive.rename(archive_path)
                         size_bytes = cpg_size_bytes(archive_path)
                     now = datetime.datetime.utcnow().isoformat() + "Z"
-                    state.cpg_registry.register(source_hash, {
-                        "archive_path": str(archive_path),
-                        "sample_id": sample_id,
-                        "archived_at": now,
-                        "last_used": now,
-                        "size_bytes": size_bytes,
-                    })
+                    try:
+                        state.cpg_registry.register(source_hash, {
+                            "archive_path": str(archive_path),
+                            "sample_id": sample_id,
+                            "archived_at": now,
+                            "last_used": now,
+                            "size_bytes": size_bytes,
+                        })
+                    except Exception as exc:
+                        print(json.dumps({"component":"joern-proxy","event":"registry_register_error","error":str(exc)}), flush=True)
                 cpg_remove(cpg_out)
-                state.cpg_registry.evict_if_needed()
+                cpg_remove(Path(state.settings.cpg_out_dir).parent / ".joern-src" / sample_id)
+                try:
+                    state.cpg_registry.evict_if_needed()
+                except Exception as exc:
+                    print(json.dumps({"component":"joern-proxy","event":"registry_evict_error","error":str(exc)}), flush=True)
                 with state.sid_hash_lock:
                     state.sid_to_hash.pop(sample_id, None)
                 clear_affinity_state(state, sample_id, request_headers=request_headers)
@@ -119,6 +134,7 @@ def handle_cleanup(
 
         if existed:
             cpg_remove(cpg_out)
+            cpg_remove(Path(state.settings.cpg_out_dir).parent / ".joern-src" / sample_id)
         with state.sid_hash_lock:
             state.sid_to_hash.pop(sample_id, None)
         clear_affinity_state(state, sample_id, request_headers=request_headers)

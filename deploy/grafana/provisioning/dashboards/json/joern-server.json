@@ -8,138 +8,161 @@
   "panels": [
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 1 }, { "color": "green", "value": 1 }] }
-        }
-      },
-      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
-      "id": 7,
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 8 }, { "color": "green", "value": 10 }] } } },
+      "gridPos": { "h": 4, "w": 3, "x": 0, "y": 0 },
+      "id": 1,
       "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
-      "title": "Active replicas",
+      "title": "Replicas UP",
       "type": "stat",
-      "targets": [{ "expr": "count(up{job=\"joern-proxy\"} == 1)", "legendFormat": "replicas" }]
+      "targets": [{ "expr": "count(up{job=\"joern-proxy\"} == 1)", "legendFormat": "" }]
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [
-            { "options": { "0": { "color": "red", "text": "DOWN" } }, "type": "value" },
-            { "options": { "1": { "color": "green", "text": "UP" } }, "type": "value" }
-          ],
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
-        }
-      },
-      "gridPos": { "h": 4, "w": 8, "x": 4, "y": 0 },
-      "id": 1,
+      "fieldConfig": { "defaults": { "mappings": [{ "options": { "0": { "color": "red", "text": "DOWN" } }, "type": "value" }, { "options": { "1": { "color": "green", "text": "UP" } }, "type": "value" }], "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] } } },
+      "gridPos": { "h": 4, "w": 12, "x": 3, "y": 0 },
+      "id": 2,
       "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
-      "title": "Joern up (scraped replicas only)",
+      "title": "Joern REPL UP",
       "type": "stat",
       "targets": [{ "expr": "joern_proxy_joern_up and on(instance) up{job=\"joern-proxy\"}", "legendFormat": "{{container}}" }]
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "unit": "short" } },
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
-      "id": 2,
+      "fieldConfig": { "defaults": { "unit": "percent", "max": 100, "min": 0, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 70 }, { "color": "red", "value": 85 }] } } },
+      "gridPos": { "h": 4, "w": 9, "x": 15, "y": 0 },
+      "id": 3,
       "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
-      "title": "Affinity map size",
+      "title": "Container RAM %",
       "type": "stat",
-      "targets": [{ "expr": "joern_proxy_affinity_map_size and on(instance) up{job=\"joern-proxy\"}", "legendFormat": "{{container}}" }]
+      "targets": [{ "expr": "(joern_proxy_memory_container_usage_bytes / joern_proxy_memory_container_limit_bytes) * 100", "legendFormat": "{{container}}" }]
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "unit": "s" } },
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
-      "id": 3,
-      "title": "Proxy uptime",
-      "type": "stat",
-      "targets": [{ "expr": "joern_proxy_uptime_seconds and on(instance) up{job=\"joern-proxy\"}", "legendFormat": "{{container}}" }]
+      "fieldConfig": { "defaults": { "unit": "decbytes" } },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "id": 10,
+      "title": "Container RAM usage per replica",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "joern_proxy_memory_container_usage_bytes", "legendFormat": "{{container}} usage" },
+        { "expr": "joern_proxy_memory_container_limit_bytes", "legendFormat": "{{container}} limit" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "decbytes" } },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "id": 11,
+      "title": "Proxy RSS per replica",
+      "type": "timeseries",
+      "targets": [{ "expr": "joern_proxy_memory_rss_bytes", "legendFormat": "{{container}}" }]
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "reqps" } },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
-      "id": 4,
-      "title": "Query-sync request rate by status",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "id": 20,
+      "title": "Query-sync rate per replica",
       "type": "timeseries",
-      "targets": [
-        {
-          "expr": "sum(rate(joern_proxy_query_sync_requests_total[5m]) * on(instance) group_left() up{job=\"joern-proxy\"}) by (status)",
-          "legendFormat": "{{status}}"
-        }
-      ]
+      "targets": [{ "expr": "sum(rate(joern_proxy_query_sync_requests_total[2m])) by (container)", "legendFormat": "{{container}}" }]
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "s" } },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
-      "id": 5,
-      "title": "Query-sync latency (avg from sum/count)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "id": 21,
+      "title": "Query-sync latency (p50 avg)",
       "type": "timeseries",
-      "targets": [
-        {
-          "expr": "sum(rate(joern_proxy_query_sync_duration_seconds_sum[5m]) * on(instance) group_left() up{job=\"joern-proxy\"}) / sum(rate(joern_proxy_query_sync_duration_seconds_count[5m]) * on(instance) group_left() up{job=\"joern-proxy\"})",
-          "legendFormat": "avg"
-        }
-      ]
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 12 },
-      "id": 6,
-      "title": "502/504 rate",
-      "type": "timeseries",
-      "targets": [
-        {
-          "expr": "sum(rate(joern_proxy_query_sync_requests_total{status=~\"502|504\"}[5m]) * on(instance) group_left() up{job=\"joern-proxy\"})",
-          "legendFormat": "errors/sec"
-        }
-      ]
+      "targets": [{ "expr": "sum(rate(joern_proxy_query_sync_duration_seconds_sum[2m])) by (container) / sum(rate(joern_proxy_query_sync_duration_seconds_count[2m])) by (container)", "legendFormat": "{{container}}" }]
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "reqps" } },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
-      "id": 8,
-      "title": "Parse request rate by status",
+      "id": 30,
+      "title": "Query-sync 502/504 rate",
       "type": "timeseries",
-      "targets": [
-        {
-          "expr": "sum(rate(joern_proxy_parse_requests_total[5m]) * on(instance) group_left() up{job=\"joern-proxy\"}) by (status)",
-          "legendFormat": "{{status}}"
-        }
-      ]
+      "targets": [{ "expr": "sum(rate(joern_proxy_query_sync_requests_total{status=~\"502|504\"}[2m])) or vector(0)", "legendFormat": "errors/sec" }]
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "unit": "s" } },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 } },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
-      "id": 9,
-      "title": "Parse latency (avg from sum/count)",
+      "id": 31,
+      "title": "Query-sync error ratio",
       "type": "timeseries",
-      "targets": [
-        {
-          "expr": "sum(rate(joern_proxy_parse_duration_seconds_sum[5m]) * on(instance) group_left() up{job=\"joern-proxy\"}) / sum(rate(joern_proxy_parse_duration_seconds_count[5m]) * on(instance) group_left() up{job=\"joern-proxy\"})",
-          "legendFormat": "avg"
-        }
-      ]
+      "targets": [{ "expr": "sum(rate(joern_proxy_query_sync_requests_total{status=~\"502|504\"}[2m])) / sum(rate(joern_proxy_query_sync_requests_total[2m])) or vector(0)", "legendFormat": "error ratio" }]
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "reqps" } },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
-      "id": 10,
-      "title": "Cleanup request rate by status",
+      "id": 40,
+      "title": "Parse rate per replica",
       "type": "timeseries",
-      "targets": [
-        {
-          "expr": "sum(rate(joern_proxy_cleanup_requests_total[5m]) * on(instance) group_left() up{job=\"joern-proxy\"}) by (status, archived)",
-          "legendFormat": "{{status}} archived={{archived}}"
-        }
-      ]
+      "targets": [{ "expr": "sum(rate(joern_proxy_parse_requests_total[2m])) by (container)", "legendFormat": "{{container}}" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "id": 41,
+      "title": "Parse 502/504 rate",
+      "type": "timeseries",
+      "targets": [{ "expr": "sum(rate(joern_proxy_parse_requests_total{status=~\"502|504\"}[2m])) or vector(0)", "legendFormat": "errors/sec" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 36 },
+      "id": 42,
+      "title": "Parse latency (p50 avg)",
+      "type": "timeseries",
+      "targets": [{ "expr": "sum(rate(joern_proxy_parse_duration_seconds_sum[2m])) by (container) / sum(rate(joern_proxy_parse_duration_seconds_count[2m])) by (container)", "legendFormat": "{{container}}" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 } },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 36 },
+      "id": 43,
+      "title": "Parse error ratio",
+      "type": "timeseries",
+      "targets": [{ "expr": "sum(rate(joern_proxy_parse_requests_total{status=~\"502|504\"}[2m])) / sum(rate(joern_proxy_parse_requests_total[2m])) or vector(0)", "legendFormat": "error ratio" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 44 },
+      "id": 50,
+      "title": "Cleanup rate per replica",
+      "type": "timeseries",
+      "targets": [{ "expr": "sum(rate(joern_proxy_cleanup_requests_total[2m])) by (container)", "legendFormat": "{{container}}" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 44 },
+      "id": 51,
+      "title": "Cleanup 502/504 rate",
+      "type": "timeseries",
+      "targets": [{ "expr": "sum(rate(joern_proxy_cleanup_requests_total{status=~\"502|504\"}[2m])) or vector(0)", "legendFormat": "errors/sec" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 52 },
+      "id": 60,
+      "title": "Affinity map size",
+      "type": "timeseries",
+      "targets": [{ "expr": "joern_proxy_affinity_map_size", "legendFormat": "{{container}}" }]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 52 },
+      "id": 61,
+      "title": "Active CPG sessions",
+      "type": "timeseries",
+      "targets": [{ "expr": "joern_proxy_affinity_map_size", "legendFormat": "{{container}}" }]
     }
   ],
   "refresh": "15s",
@@ -150,5 +173,5 @@
   "timezone": "browser",
   "title": "Joern Server",
   "uid": "joern-server-main",
-  "version": 3
+  "version": 4
 }

@@ -9,7 +9,7 @@ from typing import Optional
 
 from joern_server.cache import LRUCache
 from joern_server.config import Settings
-from joern_server.cpg import CPGRegistry
+from joern_server.cpg import FileCPGRegistry
 from joern_server.metrics import PrometheusMetrics
 
 
@@ -18,7 +18,7 @@ class AppState:
     settings: Settings
     metrics: Optional[PrometheusMetrics]
     query_cache: Optional[LRUCache]
-    cpg_registry: Optional[CPGRegistry]
+    cpg_registry: Optional[FileCPGRegistry]
     repl_semaphore: threading.Semaphore
     parse_semaphore: threading.Semaphore
     affinity_cpg_path: dict[str, str] = field(default_factory=dict)
@@ -40,11 +40,10 @@ class AppState:
                 ttl_sec=settings.query_cache_ttl_sec,
             )
 
-        cpg_registry = CPGRegistry(
-            settings.cpg_registry_path,
+        cpg_registry = FileCPGRegistry(
+            Path(settings.cpg_archive_dir),
             archive_max_count=settings.cpg_archive_max_count,
             archive_max_gb=float(settings.cpg_archive_max_gb),
-            legacy_path=settings._cpg_registry_legacy_path,
         )
 
         return cls(

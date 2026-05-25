@@ -72,8 +72,10 @@ Response header `X-Served-By` identifies the backend (e.g. `joern3`).
 Healthy response:
 
 ```json
-{"ok": true, "joern_ok": true, "latency_ms": 30}
+{"ok": true, "joern_ok": true, "joern_http_ok": true, "latency_ms": 5}
 ```
+
+With `?deep=true` the response also includes `joern_repl_ok`, `repl_latency_ms`, and `repl_error`.
 
 **503** means the proxy is up but Joern is not — HAProxy should mark the backend down after deploy with current proxy code.
 
@@ -154,6 +156,8 @@ See `deploy/.env.example`. Important keys:
 | `CPG_ARCHIVE_MAX_COUNT` | `100` | Archive eviction |
 | `JOERN_READY_TIMEOUT_SEC` | `120` | Entrypoint wait for Joern |
 | `JOERN_MAX_RESTARTS` | `10` | Entrypoint restart limit |
+| `JOERN_WATCHDOG_INTERVAL_SEC` | `5` | Watchdog health probe interval |
+| `JOERN_WATCHDOG_FAIL_THRESHOLD` | `3` | Consecutive failures before restart |
 
 ---
 

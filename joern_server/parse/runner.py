@@ -30,7 +30,7 @@ def run_joern_parse(
     timeout_sec: int,
     jvm_xmx: str = "2g",
 ) -> ParseRunResult:
-    cmd = [parse_bin, f"-J-Xmx{jvm_xmx}", str(src_dir), "--output", str(cpg_out)]
+    cmd = [parse_bin, f"-J-Xmx{jvm_xmx}", "-J-XX:+UseContainerSupport", str(src_dir), "--output", str(cpg_out)]
     if language:
         cmd.extend(["--language", language])
     try:

@@ -38,6 +38,8 @@ class Settings:
 
     @property
     def cpg_registry_path(self) -> Path:
+        # Deprecated: FileCPGRegistry uses cpg_archive_dir directly.
+        # Kept for backward compatibility.
         return Path(self.cpg_archive_dir) / "cpg-registry.json"
 
     @property

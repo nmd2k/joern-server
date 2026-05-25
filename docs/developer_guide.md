@@ -141,7 +141,9 @@ Process-wide state in `joern_server/state.py`, attached to the FastAPI app in li
 
 - `affinity_cpg_path` — affinity key → CPG path after successful `importCpg`
 - `repl_semaphore` — serializes `/query-sync` and `/graph/*`
-- `query_cache`, `cpg_registry`, `metrics`
+- `query_cache` — optional `LRUCache` (enabled when `QUERY_CACHE_MAX_SIZE > 0`)
+- `cpg_registry` — always-on `CPGRegistry` backed by a shared SQLite file (WAL mode); supports concurrent access across replicas via the `cpg-archive` volume
+- `metrics` — Prometheus metrics collector
 
 ### REPL serialization
 

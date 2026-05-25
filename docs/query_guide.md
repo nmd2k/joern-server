@@ -77,6 +77,8 @@ curl -s -X POST http://127.0.0.1:8080/parse \
   -d '{"sample_id":"demo","source_code":"int main(){return 0;}","language":"c"}'
 ```
 
+Response includes `cpg_path`, `source_hash`, and `cache_hit` (true when served from `cpg-archive`).
+
 ### Step 2 — Import (bind REPL)
 
 ```bash
@@ -112,7 +114,14 @@ curl -s -X POST http://127.0.0.1:8080/cleanup \
   -d '{"sample_id": "demo"}'
 ```
 
-Optional `"archive": true` moves the CPG to `cpg-archive` keyed by `source_hash`.
+Add `"archive": true` to preserve the CPG for future parse deduplication:
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/cleanup \
+  -H 'Content-Type: application/json' \
+  -H 'X-Affinity-Key: demo' \
+  -d '{"sample_id": "demo", "archive": true}'
+``` When set, response includes `"archived": true` and the CPG is registered in the shared SQLite registry for future parse deduplication.
 
 ---
 

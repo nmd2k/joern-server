@@ -20,18 +20,24 @@ HTTP API exposed on port **8080** (via HAProxy in scale mode). Optional HTTP Bas
 
 ### `GET /health`
 
-Deep health check. Probes Joern with `val _health = 1`.
+Deep health check. By default runs a TCP connectivity check against internal Joern. Add `?deep=true` to also probe Joern with `val _health = 1`.
 
-**200**
+**200** (default)
 
 ```json
-{"ok": true, "joern_ok": true, "latency_ms": 25}
+{"ok": true, "joern_ok": true, "joern_http_ok": true, "latency_ms": 5}
+```
+
+**200** (`?deep=true`)
+
+```json
+{"ok": true, "joern_ok": true, "joern_http_ok": true, "joern_repl_ok": true, "latency_ms": 5, "repl_latency_ms": 30}
 ```
 
 **503** — Joern unreachable
 
 ```json
-{"ok": false, "joern_ok": false, "latency_ms": 5, "error": "..."}
+{"ok": false, "joern_ok": false, "joern_http_ok": false, "latency_ms": 5, "error": "..."}
 ```
 
 ---
@@ -42,9 +48,11 @@ Prometheus text exposition (when metrics enabled in `main()`).
 
 ---
 
-### `GET /cache-metrics`
+### `POST /cache-metrics`
 
 LRU query cache statistics, or `{"error": "cache not enabled"}` when `QUERY_CACHE_MAX_SIZE=0`.
+
+Returns `hits`, `misses`, `evictions`, `size`, `max_size`, `ttl_sec`, and computed `hit_rate`.
 
 ---
 
@@ -179,7 +187,7 @@ Routers are registered in `joern_server.app.create_app()`:
 
 | Module | Routes |
 |--------|--------|
-| `joern_server.api.routers.health` | `GET /health`, `/version`, `/metrics`, `/cache-metrics` |
+| `joern_server.api.routers.health` | `GET /health`, `/version`, `/metrics`; `POST /cache-metrics` |
 | `joern_server.api.routers.query` | `POST /query-sync` |
 | `joern_server.api.routers.parse` | `POST /parse` |
 | `joern_server.api.routers.parse_repo` | `POST /parse/repo`, `/parse/repo/upload` |

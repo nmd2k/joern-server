@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
-import shutil
-import tempfile
+import json
 import time
 from http import HTTPStatus
 from pathlib import Path
@@ -30,7 +29,7 @@ def handle_parse(state: AppState, data: dict[str, Any]) -> tuple[int, dict[str, 
         nonlocal status_label, cache_hit, language
         cache_hit = cache
         language = lang
-        status_label = str(http_status)
+        status_label = str(http_status.value)
         record_parse_request(
             state,
             status=status_label,
@@ -58,7 +57,11 @@ def handle_parse(state: AppState, data: dict[str, Any]) -> tuple[int, dict[str, 
     hash_lock = get_hash_lock(source_hash)
     with hash_lock:
         if state.cpg_registry is not None:
-            entry = state.cpg_registry.lookup(source_hash)
+            try:
+                entry = state.cpg_registry.lookup(source_hash)
+            except Exception as exc:
+                entry = None
+                print(json.dumps({"component":"joern-proxy","event":"registry_lookup_error","error":str(exc)}), flush=True)
             if entry is not None:
                 archive_path = Path(entry["archive_path"])
                 if archive_path.exists():
@@ -66,7 +69,10 @@ def handle_parse(state: AppState, data: dict[str, Any]) -> tuple[int, dict[str, 
                         cpg_copy(archive_path, cpg_out)
                         now = datetime.datetime.utcnow().isoformat() + "Z"
                         entry["last_used"] = now
-                        state.cpg_registry.register(source_hash, entry)
+                        try:
+                            state.cpg_registry.register(source_hash, entry)
+                        except Exception as exc:
+                            print(json.dumps({"component":"joern-proxy","event":"registry_register_error","error":str(exc)}), flush=True)
                         with state.sid_hash_lock:
                             state.sid_to_hash[sample_id] = source_hash
                         meta_path = cpg_out / ".joern_hash"
@@ -119,15 +125,19 @@ def handle_parse(state: AppState, data: dict[str, Any]) -> tuple[int, dict[str, 
     if cpg_out.exists() and overwrite:
         cpg_remove(cpg_out)
 
-    tmp_src_dir = Path(tempfile.mkdtemp(prefix=f"joern-src-{sample_id}-"))
+    src_base = Path(state.settings.cpg_out_dir).parent / ".joern-src"
+    src_dir = src_base / sample_id
+    if src_dir.exists():
+        cpg_remove(src_dir)
+    src_dir.mkdir(parents=True, exist_ok=True)
     try:
-        src_path = tmp_src_dir / Path(filename).name
+        src_path = src_dir / Path(filename).name
         src_path.write_text(source_code, encoding="utf-8", newline="\n")
         with state.parse_semaphore:
             try:
                 result = run_joern_parse(
                     state.settings.parse_bin,
-                    tmp_src_dir,
+                    src_dir,
                     cpg_out,
                     language=language,
                     timeout_sec=state.settings.parse_timeout_sec,
@@ -161,5 +171,3 @@ def handle_parse(state: AppState, data: dict[str, Any]) -> tuple[int, dict[str, 
         return finish(http_status, body, lang=language or None)
     except Exception as exc:
         return finish(HTTPStatus.BAD_GATEWAY, json_error(str(exc), code="parse_failed"))
-    finally:
-        shutil.rmtree(tmp_src_dir, ignore_errors=True)

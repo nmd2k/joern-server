@@ -36,6 +36,19 @@ def activate_cpg(
 
     if desired_cpg:
         if active_cpg != desired_cpg:
+            if active_cpg is not None:
+                try:
+                    upstream.post_query_sync(
+                        state.internal_url,
+                        query="close",
+                        headers=headers,
+                        timeout_sec=min(30, timeout_sec),
+                    )
+                except Exception:
+                    pass
+                state.active_cpg_path = None
+                if state.metrics is not None:
+                    state.metrics.set_gauge("joern_proxy_active_cpg_loaded", 0.0)
             resp = upstream.post_query_sync(
                 state.internal_url,
                 query=f'importCpg("{desired_cpg}")',
@@ -54,8 +67,12 @@ def activate_cpg(
                 state.affinity_cpg_path.pop(affinity_key, None)
                 state.active_affinity_key = None
                 state.active_cpg_path = None
+                if state.metrics is not None:
+                    state.metrics.set_gauge("joern_proxy_active_cpg_loaded", 0.0)
                 return False, f"failed to activate CPG for affinity {affinity_key}"
             state.active_cpg_path = desired_cpg
+            if state.metrics is not None:
+                state.metrics.set_gauge("joern_proxy_active_cpg_loaded", 1.0)
         state.active_affinity_key = affinity_key
         return True, None
 
@@ -96,6 +113,7 @@ def record_import_cpg_success(
             "joern_proxy_affinity_map_size",
             float(len(state.affinity_cpg_path)),
         )
+        state.metrics.set_gauge("joern_proxy_active_cpg_loaded", 1.0)
 
 
 def clear_affinity(

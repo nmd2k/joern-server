@@ -53,12 +53,14 @@ Started by `docker/unified-entrypoint.sh`:
 1. Start Joern `--server` on `JOERN_INTERNAL_PORT` (default **18080**).
 2. Wait until Joern accepts `POST /query-sync` with `val _health = 1`.
 3. Start **uvicorn** `joern_server.app:app` on **8080** (`PYTHONPATH=/app`).
-4. Supervise: if Joern exits, restart Joern and the HTTP service (bounded by `JOERN_MAX_RESTARTS`).
+4. Start **watchdog** that probes Joern every `JOERN_WATCHDOG_INTERVAL_SEC` and triggers restart on consecutive failures.
+5. Supervise: if Joern exits, restart Joern and the HTTP service (bounded by `JOERN_MAX_RESTARTS`).
 
 | Process | Port | Role |
 |---------|------|------|
 | Joern JVM | 18080 (internal) | CPGQL REPL; one active CPG in memory |
 | FastAPI (uvicorn) | 8080 (published via HAProxy in scale) | HTTP API, parse subprocess, `AppState` (affinity, cache, registry) |
+| Watchdog (shell) | — | Probes Joern health; triggers restart on failure |
 
 Clients never connect to 18080 directly.
 
@@ -123,7 +125,7 @@ Optional: `X-Request-Id` for correlation (returned on error responses).
 
 Parse runs `joern-parse` in a **subprocess** (not under `repl_semaphore`). Any replica can parse; output is visible on all replicas via the shared **`cpg-out`** volume.
 
-**Parse deduplication:** `CPGRegistry` keys archives by `source_hash` (SHA-256 of source). Cache hits copy from `cpg-archive` to `cpg-out`.
+**Parse deduplication:** `CPGRegistry` (SQLite, WAL mode) keys archives by `source_hash` (SHA-256 of source). Cache hits copy from `cpg-archive` to `cpg-out`. All replicas share the same SQLite file via the `cpg-archive` volume.
 
 ---
 
@@ -132,7 +134,7 @@ Parse runs `joern-parse` in a **subprocess** (not under `repl_semaphore`). Any r
 | Path | Scope | Purpose |
 |------|-------|---------|
 | `/workspace/cpg-out/<sample_id>/` | Shared volume | Built CPG directories |
-| `/workspace/cpg-archive/` | Shared volume | Archived CPGs by `source_hash` |
+| `/workspace/cpg-archive/` | Shared volume | Archived CPGs by `source_hash` + `cpg-registry.json` SQLite DB |
 | `/workspace/repo-uploads/<upload_id>/` | Shared volume | Staged uploads (TTL) |
 | `_affinity_cpg_path` | Per replica (RAM) | Affinity key → last successful `importCpg` path |
 
@@ -172,12 +174,13 @@ Example: 8 parallel sessions on 10 replicas ≈ low queue depth if affinity keys
 
 | Endpoint | Behavior |
 |----------|----------|
-| `GET /health` | Probes internal Joern; **200** + `joern_ok: true` or **503** |
+| `GET /health` | TCP probe by default; `?deep=true` overlays a CPGQL health query against Joern |
+| `GET /health?deep=true` | Returns `joern_http_ok`, `joern_repl_ok`, `repl_latency_ms`, `repl_error` |
 | `GET /metrics` | Prometheus text format (`joern_proxy_*`) |
-| `GET /cache-metrics` | LRU stats when query cache enabled |
+| `POST /cache-metrics` | LRU stats when query cache enabled (POST, not GET) |
 | `GET /version` | Forwards `version` query to Joern |
 
-Docker healthcheck uses `POST /query-sync` (same as deep health). HAProxy uses `GET /health`.
+Docker healthcheck uses `POST /query-sync` (same probe as `?deep=true`). HAProxy uses `GET /health` (TCP-only, no `deep`).
 
 Optional monitoring: `deploy/compose.monitoring.yml` (Prometheus + Grafana).
 
@@ -207,7 +210,7 @@ Details: [API reference](api_reference.md), [Query guide](query_guide.md).
 | `joern_server/api/routers/` | HTTP routes (thin handlers) |
 | `joern_server/parse/` | Single/repo parse, language aliases, subprocess runner |
 | `joern_server/graph/` | CFG/DFG/DDG/PDG/AST extraction |
-| `joern_server/cpg/` | Registry, storage, path helpers |
+| `joern_server/cpg/` | SQLite-backed registry, storage, path helpers |
 | `joern_server/cache/` | LRU query cache |
 | `joern_server/session/` | Affinity map, REPL lock |
 | `joern_server/upstream/` | httpx calls to Joern `:18080` |
