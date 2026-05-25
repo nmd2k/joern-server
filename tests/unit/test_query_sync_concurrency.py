@@ -226,3 +226,34 @@ class TestSessionCPGIsolation:
         assert "only_a" in body_a_q.get("stdout", "")
         assert "only_b" not in body_a_q.get("stdout", "")
         assert imports == ["/tmp/a.cpg", "/tmp/b.cpg", "/tmp/a.cpg"]
+
+
+class TestCloseQueryClearsState:
+    def test_successful_close_clears_active_cpg_state(self, tmp_path):
+        state = make_test_state(tmp_path)
+        cpg_path = str(tmp_path / "cpg-out" / "sample-x")
+        state.affinity_cpg_path["sample-x"] = cpg_path
+        state.active_cpg_path = cpg_path
+        state.active_affinity_key = "sample-x"
+
+        def fake_post(*args, **kwargs):
+            return MagicMock(
+                status_code=200,
+                json=lambda: {"success": True, "stdout": "", "stderr": ""},
+            )
+
+        client = make_test_client(state=state)
+        with patch("joern_server.upstream.joern.post_query_sync", side_effect=fake_post):
+            resp = client.post(
+                "/query-sync",
+                json={"query": "close"},
+                headers=_headers("sample-x"),
+            )
+
+        assert resp.status_code == HTTPStatus.OK
+        assert state.active_cpg_path is None
+        assert state.active_affinity_key is None
+        assert "sample-x" not in state.affinity_cpg_path
+
+        metrics = client.get("/metrics").text
+        assert "joern_proxy_active_cpg_loaded 0.0" in metrics
