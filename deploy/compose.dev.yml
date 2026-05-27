@@ -17,6 +17,7 @@ services:
       - "${JOERN_PUBLISH_PORT:-8080}:8080"
     volumes:
       - ../ingest:/workspace/ingest:ro
+      - ${DATASETS_HOST_DIR:-../datasets}:/workspace/datasets:ro
       - joern-workspace:/workspace/joern-workspace
       - cpg-out:/workspace/cpg-out
       - cpg-archive:/workspace/cpg-archive
@@ -32,6 +33,7 @@ services:
       CPG_ARCHIVE_MAX_COUNT: "${CPG_ARCHIVE_MAX_COUNT:-100}"
       CPG_ARCHIVE_MAX_GB: "${CPG_ARCHIVE_MAX_GB:-50}"
       QUERY_CACHE_MAX_SIZE: "${QUERY_CACHE_MAX_SIZE:-0}"
+      PARSE_REPO_ALLOWED_ROOTS: "${PARSE_REPO_ALLOWED_ROOTS:-/workspace/datasets}"
     ulimits:
       nofile:
         soft: 65536

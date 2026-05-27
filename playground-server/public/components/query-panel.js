@@ -6,17 +6,22 @@
   tmpl.innerHTML = '<div class="panel">' +
     '<div class="panel-header" @click="panelOpen=!panelOpen">' +
       '<h2><span class="chevron" :class="{open:panelOpen}">&#9654;</span> CPGQL Query Editor</h2>' +
+      '<span v-if="affinityKey" class="badge badge-green" style="font-size:10px">{{ affinityKey }}</span>' +
     '</div>' +
     '<div class="panel-body" :class="{show:panelOpen}">' +
+      '<div v-if="!affinityKey" class="info-banner">' +
+        'No CPG loaded. Parse &amp; load a repo above, or paste code in the Parse panel.' +
+      '</div>' +
       '<div class="form-group">' +
         '<label>Raw CPGQL Query</label>' +
-        '<textarea v-model="rawQuery" class="mono" rows="6" placeholder=\'e.g. cpg.method.name("main").l\'></textarea>' +
+        '<textarea v-model="rawQuery" class="mono" rows="6" placeholder=\'e.g. cpg.method.name("main").l\' @keydown="handleKeydown"></textarea>' +
       '</div>' +
       '<div style="margin-bottom:10px">' +
         '<button class="btn btn-primary" @click="runRawQuery" :disabled="queryRunning">' +
           '<span v-if="queryRunning" class="spinner"></span>' +
           '{{ queryRunning ? \'Running...\' : \'Run Query\' }}' +
         '</button>' +
+        '<span v-if="lastLatency !== null" class="info-row" style="margin-left:10px">{{ lastLatency }}ms</span>' +
       '</div>' +
       '<div v-if="rawResult" class="result-panel">' +
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
@@ -44,22 +49,28 @@
     data: function() {
       return {
         panelOpen: true,
-        rawQuery: 'cpg.method.name("add").l',
+        rawQuery: 'cpg.method.name.l.take(10)',
         rawResult: null,
         rawError: null,
         queryRunning: false,
-        queryHistory: []
+        queryHistory: [],
+        lastLatency: null
       };
     },
     computed: {
+      affinityKey: function() {
+        return window.PlaygroundState ? window.PlaygroundState.affinityKey : null;
+      },
       formattedRawResult: function() {
         return this.formatResult(this.rawResult);
       }
     },
     methods: {
-      escapeCPGQL: function(str) {
-        if (typeof str !== 'string') return str;
-        return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+      _buildHeaders: function() {
+        var h = { 'Content-Type': 'application/json' };
+        var key = window.PlaygroundState ? window.PlaygroundState.affinityKey : null;
+        if (key) h['X-Affinity-Key'] = key;
+        return h;
       },
       formatResult: function(val) {
         if (!val) return '';
@@ -79,6 +90,12 @@
         var d = new Date(ts);
         return d.toLocaleTimeString();
       },
+      handleKeydown: function(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+          e.preventDefault();
+          this.runRawQuery();
+        }
+      },
       runRawQuery: async function() {
         if (!this.rawQuery.trim()) return;
         return this._runQuery(this.rawQuery.trim());
@@ -88,13 +105,16 @@
         self.queryRunning = true;
         self.rawResult = null;
         self.rawError = null;
+        self.lastLatency = null;
+        var t0 = performance.now();
         try {
           var resp = await fetch('/api/query-sync', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: self._buildHeaders(),
             body: JSON.stringify({ query: query })
           });
           var data = await resp.json();
+          self.lastLatency = Math.round(performance.now() - t0);
           if (resp.ok && data.success !== false) {
             self.rawResult = data;
           } else {
@@ -103,6 +123,7 @@
           }
         } catch (e) {
           self.rawError = 'Network error: ' + e.message;
+          self.lastLatency = Math.round(performance.now() - t0);
         } finally {
           self.queryRunning = false;
           self._addHistory(query, self.rawResult || { error: self.rawError });

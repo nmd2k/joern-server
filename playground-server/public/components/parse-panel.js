@@ -5,7 +5,7 @@
   tmpl.id = 'parse-panel-template';
   tmpl.innerHTML = '<div class="panel">' +
     '<div class="panel-header" @click="panelOpen=!panelOpen">' +
-      '<h2><span class="chevron" :class="{open:panelOpen}">&#9654;</span> Parse &amp; Load CPG</h2>' +
+      '<h2><span class="chevron" :class="{open:panelOpen}">&#9654;</span> Parse &amp; Load CPG (Inline Code)</h2>' +
       '<span v-if="parseResult" class="badge" :class="parseResult.cache_hit?\'badge-green\':\'badge-yellow\'">' +
         '{{ parseResult.cache_hit ? \'cache hit\' : \'fresh parse\' }}' +
       '</span>' +
@@ -57,7 +57,7 @@
     template: '#parse-panel-template',
     data: function() {
       return {
-        panelOpen: true,
+        panelOpen: false,
         sourceCode: '#include <stdio.h>\n\nint add(int a, int b) {\n    return a + b;\n}\n\nint main() {\n    printf("Sum: %d\\n", add(3, 4));\n    return 0;\n}',
         language: 'c',
         sampleId: 'playground-sample',
@@ -90,16 +90,20 @@
           var data = await resp.json();
           if (resp.ok && data.ok) {
             self.parseResult = data;
+            var cpgPath = data.cpg_path || '/workspace/cpg-out/' + self.sampleId;
             if (window.PlaygroundState) {
               window.PlaygroundState.isLoaded = true;
               window.PlaygroundState.sampleId = self.sampleId;
               window.PlaygroundState.language = self.language;
+              window.PlaygroundState.affinityKey = self.sampleId;
             }
             try {
-              var cpgPath = data.cpg_path || '/workspace/cpg-out/' + self.sampleId;
               await fetch('/api/query-sync', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-Affinity-Key': self.sampleId
+                },
                 body: JSON.stringify({ query: 'importCpg("' + self.escapeCPGQL(cpgPath) + '")' })
               });
             } catch (e) { /* best-effort */ }
@@ -124,6 +128,7 @@
           self.parseError = null;
           if (window.PlaygroundState) {
             window.PlaygroundState.isLoaded = false;
+            window.PlaygroundState.affinityKey = null;
           }
         } catch (e) {
           self.parseError = 'Cleanup error: ' + e.message;

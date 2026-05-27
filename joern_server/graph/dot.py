@@ -1,18 +1,26 @@
 import re
 
 
+def extract_dot_from_stdout(stdout: str) -> str:
+    """Pull DOT text from Joern REPL output (may be wrapped in List(\"\"\"...\"\"\"))."""
+    if not stdout:
+        return ""
+    m = re.search(r'"""(digraph[\s\S]*?)"""', stdout)
+    if m:
+        return m.group(1).strip()
+    idx = stdout.find("digraph")
+    if idx >= 0:
+        return stdout[idx:].strip()
+    return stdout.strip()
+
+
 def dot_to_graph(dot_text: str) -> dict:
     """Parse Joern DOT output into {nodes, edges} JSON structure."""
     nodes: list[dict[str, str]] = []
     edges: list[dict[str, str]] = []
-    if not dot_text:
+    text = extract_dot_from_stdout(dot_text)
+    if not text:
         return {"nodes": nodes, "edges": edges}
-
-    text = dot_text.strip()
-    idx = text.find("digraph")
-    if idx == -1:
-        return {"nodes": nodes, "edges": edges}
-    text = text[idx:]
 
     m = re.match(r'digraph\s+"([^"]*)"\s*\{', text)
     if not m:
@@ -40,13 +48,13 @@ def dot_to_graph(dot_text: str) -> dict:
             continue
         if line.endswith(";"):
             line = line[:-1].strip()
-        if not line:
+        if not line or line.startswith("node ["):
             continue
 
         edge_m = re.match(r'"([^"]*)"\s*->\s*"([^"]*)"(?:\s*\[([^\]]*)\])?', line)
         if edge_m:
             attrs_str = edge_m.group(3) or ""
-            label_m = re.search(r'label="([^"]*)"', attrs_str)
+            label_m = re.search(r'label\s*=\s*"([^"]*)"', attrs_str)
             edges.append({
                 "source": edge_m.group(1),
                 "target": edge_m.group(2),
@@ -54,11 +62,12 @@ def dot_to_graph(dot_text: str) -> dict:
             })
             continue
 
-        node_m = re.match(r'"([^"]*)"(?:\s*\[([^\]]*)\])?', line)
+        node_m = re.match(r'"([^"]*)"\s*\[', line)
         if node_m:
-            attrs_str = node_m.group(2) or ""
-            label_m = re.search(r'label="([^"]*)"', attrs_str)
-            shape_m = re.search(r'shape="([^"]*)"', attrs_str)
+            label_m = re.search(r'label\s*=\s*<(.*)>\s*\]\s*$', line)
+            if not label_m:
+                label_m = re.search(r'label\s*=\s*"([^"]*)"', line)
+            shape_m = re.search(r'shape\s*=\s*"([^"]*)"', line)
             nodes.append({
                 "id": node_m.group(1),
                 "label": label_m.group(1) if label_m else "",

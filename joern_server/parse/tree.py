@@ -90,13 +90,17 @@ def collect_tree_files(
             raw = path.read_bytes()
         except OSError as exc:
             return None, json_error(f"failed to read {rel}: {exc}", code="bad_request")
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
         total_bytes += len(raw)
         if total_bytes > max_bytes:
             return None, json_error(
                 f"repo exceeds max total bytes ({max_bytes})",
                 code="payload_too_large",
             )
-        files[rel] = raw.decode("utf-8")
+        files[rel] = text
     if not files:
         return None, json_error("repo tree contains no files", code="empty_tree")
     return files, None

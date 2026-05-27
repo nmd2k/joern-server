@@ -22,6 +22,7 @@ services:
       - joern-net
     volumes:
       - ../ingest:/workspace/ingest:ro
+      - ${DATASETS_HOST_DIR:-../datasets}:/workspace/datasets:ro
       - joern-workspace:/workspace/joern-workspace
       - cpg-out:/workspace/cpg-out
       - cpg-archive:/workspace/cpg-archive
@@ -43,6 +44,7 @@ services:
       JOERN_RESTART_MIN_PEERS: "${JOERN_RESTART_MIN_PEERS:-2}"
       JOERN_HAPROXY_VIP: "${JOERN_HAPROXY_VIP:-http://joern-haproxy:8080}"
       JOERN_ENABLE_DRAIN_TEST: "${JOERN_ENABLE_DRAIN_TEST:-0}"
+      PARSE_REPO_ALLOWED_ROOTS: "${PARSE_REPO_ALLOWED_ROOTS:-/workspace/datasets}"
     ulimits:
       nofile:
         soft: 65536
