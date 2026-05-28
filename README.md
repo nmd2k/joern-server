@@ -49,7 +49,7 @@ curl -s -X POST http://127.0.0.1:8080/query-sync \
   -H 'Content-Type: application/json' \
   -H 'X-Affinity-Key: demo' \
   -H 'X-Session-Id: agent-1' \
-  -d '{"query":"importCpg(\"/workspace/cpg-out/demo\")"}'
+  -d '{"query":"importCpg(\"/workspace/cpg/out/demo\")"}'
 
 curl -s -X POST http://127.0.0.1:8080/query-sync \
   -H 'Content-Type: application/json' \

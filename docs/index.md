@@ -58,7 +58,7 @@ joern-server/
 
 When integrating or modifying this repo:
 
-1. **Parse** is stateless — `POST /parse` or `/parse/repo` writes to shared `cpg-out`.
+1. **Parse** is stateless — both file-level (`POST /parse`) and repo-level (`POST /parse/repo`) parsing write to shared `cpg/out`.
 2. **Query** is stateful — use `X-Affinity-Key: <sample_id>` on every `/query-sync` after `importCpg`.
 3. **Logging** — use `X-Session-Id` for the agent run (separate from affinity).
 4. **Scaled deploy** — one VIP (`:8080`); HAProxy sticks on `X-Affinity-Key`.

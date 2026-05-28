@@ -70,24 +70,26 @@ Runs Joern `version` query; returns `{"stdout": "..."}`.
 
 ### `POST /parse`
 
-Build a CPG from a single source string.
+Build or restore a file-level CPG keyed by `sample_id`.
 
 **Body**
 
 | Field | Type | Required |
 |-------|------|----------|
 | `sample_id` | string | yes |
-| `source_code` | string | yes |
+| `source_code` | string | no* |
 | `language` | string | no |
 | `filename` | string | no |
 | `overwrite` | bool | no |
+
+\* If `source_code` is omitted/empty, the server attempts restore-by-affinity from archive using persisted `sample_id -> source_hash` mapping.
 
 **Response (200)**
 
 ```json
 {
   "ok": true,
-  "cpg_path": "/workspace/cpg-out/<sample_id>",
+  "cpg_path": "/workspace/cpg/out/<sample_id>",
   "source_hash": "<sha256>",
   "cache_hit": false
 }
@@ -97,9 +99,24 @@ Build a CPG from a single source string.
 
 ### `POST /parse/repo`
 
-Repo ingest via NDJSON body, `upload_id`, or `source_root` (ops). Query params: `sample_id`, `language`, `overwrite`.
+Build a repo-level CPG (whole project graph) via one of:
 
-Content-Type for NDJSON: `application/x-ndjson`.
+- NDJSON request body (`application/x-ndjson`)
+- JSON body with `source_root` (must be inside `PARSE_REPO_ALLOWED_ROOTS`)
+- JSON body with `upload_id` from `/parse/repo/upload`
+
+Body fields:
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `sample_id` | string | yes | CPG identity and affinity key |
+| `language` | string | no | Joern language alias accepted |
+| `overwrite` | bool | no | Replace existing CPG for same `sample_id` |
+| `source_root` | string | no | Mounted directory parse root |
+| `upload_id` | string | no | From `/parse/repo/upload` |
+| `include_extensions` | array/string | no | Filter files before parse |
+
+For NDJSON mode, use `Content-Type: application/x-ndjson`.
 
 ---
 

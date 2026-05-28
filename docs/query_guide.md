@@ -6,7 +6,7 @@ How to ingest source code, bind CPGs to sessions, run CPGQL, and clean up.
 
 ## 1. Parsing (ingestion)
 
-### Single snippet — `POST /parse`
+### File-level (`POST /parse`)
 
 For one file or a small fragment:
 
@@ -21,9 +21,11 @@ For one file or a small fragment:
 
 Language aliases (e.g. `python` → `pythonsrc`) are normalized in `joern_server.parse.language` (`_LANGUAGE_ALIASES`).
 
-### Repository — `POST /parse/repo` (NDJSON)
+### Repo-level (`POST /parse/repo`)
 
-One CPG for the whole tree. Each line is one file:
+One CPG for the whole tree.
+
+**Option A: NDJSON body** (each line is one file):
 
 ```json
 {"path": "src/main.c", "content": "#include <stdio.h>\n..."}
@@ -38,6 +40,20 @@ curl -s -X POST \
 ```
 
 **Anti-pattern:** calling `POST /parse` once per file in a multi-file project. That creates unrelated CPGs. Use repo ingest instead.
+
+**Option B: JSON body with `source_root`** (ops/dev mounted directory):
+
+```json
+{
+  "sample_id": "my-project",
+  "source_root": "/workspace/datasets/my-project",
+  "language": "c",
+  "overwrite": true,
+  "include_extensions": [".c", ".h"]
+}
+```
+
+`include_extensions` can be a JSON array or comma-separated string, and is applied during tree collection before Joern parsing.
 
 ### Large upload — `POST /parse/repo/upload`
 
@@ -56,7 +72,7 @@ curl -s -X POST \
 
 ```mermaid
 flowchart LR
-  Parse[POST /parse] --> Disk[cpg-out / sample_id]
+  Parse[POST /parse or /parse/repo] --> Disk[cpg/out / sample_id]
   Disk --> Import[POST /query-sync importCpg]
   Import --> Q1[POST /query-sync queries]
   Import --> Q2[more queries same X-Affinity-Key]
@@ -86,7 +102,7 @@ curl -s -X POST http://127.0.0.1:8080/query-sync \
   -H 'Content-Type: application/json' \
   -H 'X-Affinity-Key: demo' \
   -H 'X-Session-Id: agent-001' \
-  -d '{"query": "importCpg(\"/workspace/cpg-out/demo\")"}'
+  -d '{"query": "importCpg(\"/workspace/cpg/out/demo\")"}'
 ```
 
 On success, the proxy records the path under affinity key `demo`.

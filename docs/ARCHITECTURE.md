@@ -26,9 +26,9 @@ flowchart TB
     API --> Affinity
   end
 
-  subgraph volumes [Shared Docker volumes]
-    Out[cpg-out]
-    Arc[cpg-archive]
+  subgraph volumes [Shared CPG storage]
+    Out[cpg/out]
+    Arc[cpg/archive]
   end
 
   Agent --> HA
@@ -119,13 +119,13 @@ Optional: `X-Request-Id` for correlation (returned on error responses).
 
 | Endpoint | Input | Output |
 |----------|-------|--------|
-| `POST /parse` | JSON `source_code` | `/workspace/cpg-out/<sample_id>/` |
+| `POST /parse` | JSON `source_code` (or restore-by-affinity with `sample_id`) | `/workspace/cpg/out/<sample_id>/` |
 | `POST /parse/repo` | NDJSON or `upload_id` | One CPG per repo |
 | `POST /parse/repo/upload` | Multipart archive | Staged under `repo-uploads/` |
 
-Parse runs `joern-parse` in a **subprocess** (not under `repl_semaphore`). Any replica can parse; output is visible on all replicas via the shared **`cpg-out`** volume.
+Parse runs `joern-parse` in a **subprocess** (not under `repl_semaphore`). Any replica can parse; output is visible on all replicas via shared **`/workspace/cpg/out`**.
 
-**Parse deduplication:** `FileCPGRegistry` keys archives by `source_hash` (SHA-256 of source). Supports flat-file and directory CPG layouts under `cpg-archive/`. Cache hits copy from archive to `cpg-out`. All replicas share the same archive volume.
+**Parse deduplication:** the registry keys archives by `source_hash` (SHA-256 of source) and persists `sample_id -> source_hash` mappings for affinity restores. Cache hits copy from archive to `cpg/out`. All replicas share the same storage root.
 
 ---
 
@@ -133,15 +133,15 @@ Parse runs `joern-parse` in a **subprocess** (not under `repl_semaphore`). Any r
 
 | Path | Scope | Purpose |
 |------|-------|---------|
-| `/workspace/cpg-out/<sample_id>/` | Shared volume | Built CPG directories |
-| `/workspace/cpg-archive/` | Shared volume | Archived CPGs by `source_hash` (flat file or directory + `.meta.json`) |
+| `/workspace/cpg/out/<sample_id>/` | Shared storage | Built CPG directories |
+| `/workspace/cpg/archive/` | Shared storage | Archived CPGs by `source_hash` (flat file or directory + `.meta.json`) |
 | `/workspace/repo-uploads/<upload_id>/` | Shared volume | Staged uploads (TTL) |
 | `_affinity_cpg_path` | Per replica (RAM) | Affinity key → last successful `importCpg` path |
 
 Reference CPGs in CPGQL:
 
 ```scala
-importCpg("/workspace/cpg-out/my-sample")
+importCpg("/workspace/cpg/out/my-sample")
 ```
 
 ---
@@ -150,7 +150,7 @@ importCpg("/workspace/cpg-out/my-sample")
 
 `POST /cleanup` with `sample_id`:
 
-1. Delete or archive files under `cpg-out/<sample_id>` (optional `archive: true`).
+1. Delete or archive files under `cpg/out/<sample_id>` (optional `archive: true`).
 2. Remove matching entries from `_affinity_cpg_path`.
 3. Best-effort `close` on the REPL if that CPG was active; clears proxy active-CPG state on success.
 4. If no CPG remains loaded and container memory exceeds `JOERN_MEMORY_RESTART_MB`, schedule **drain + Joern JVM restart** to reclaim retained heap.

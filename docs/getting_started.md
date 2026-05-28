@@ -1,6 +1,6 @@
 # Getting started
 
-Run Joern Server locally, parse a snippet, and execute your first CPGQL query.
+Run Joern Server locally, parse a snippet or full repository, and execute your first CPGQL query.
 
 ---
 
@@ -52,7 +52,9 @@ curl -s http://127.0.0.1:8080/health | jq .
 
 ---
 
-## 3. Parse a code snippet
+## 3. Parse source (file-level or repo-level)
+
+### File-level parse (`POST /parse`)
 
 ```bash
 curl -s -X POST http://127.0.0.1:8080/parse \
@@ -64,6 +66,23 @@ curl -s -X POST http://127.0.0.1:8080/parse \
     "overwrite": true
   }' | jq .
 ```
+
+### Repo-level parse (`POST /parse/repo`)
+
+Mount your repo tree under `/workspace/datasets` (dev profile does this from `${DATASETS_HOST_DIR}`), then parse from `source_root`:
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/parse/repo \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "sample_id": "hello-repo",
+    "source_root": "/workspace/datasets/hello-repo",
+    "language": "c",
+    "overwrite": true
+  }' | jq .
+```
+
+You can also send NDJSON content or use `upload_id`; see [Query guide](query_guide.md).
 
 
 ---
@@ -82,7 +101,7 @@ curl -s -X POST http://127.0.0.1:8080/query-sync \
   -H 'Content-Type: application/json' \
   -H 'X-Affinity-Key: hello-world' \
   -H 'X-Session-Id: my-agent-run-1' \
-  -d '{"query": "importCpg(\"/workspace/cpg-out/hello-world\")"}' | jq .
+  -d '{"query": "importCpg(\"/workspace/cpg/out/hello-world\")"}' | jq .
 ```
 
 **Query methods:**
@@ -125,7 +144,7 @@ with JoernHTTPQueryExecutor(
         language="c",
         overwrite=True,
     )
-    ex.execute('importCpg("/workspace/cpg-out/hello-world")')
+    ex.execute('importCpg("/workspace/cpg/out/hello-world")')
     print(ex.execute("cpg.method.name.l"))
     ex.cleanup("hello-world")
 ```

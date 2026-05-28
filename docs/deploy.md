@@ -91,13 +91,17 @@ Recreate HAProxy after changing `haproxy.cfg`:
 docker compose -f deploy/compose.scale.yml --env-file deploy/.env up -d joern-haproxy --force-recreate
 ```
 
-### Shared volumes
+### Shared CPG storage (`CPG_BASE_DIR`)
 
-| Volume | Mount | Purpose |
-|--------|-------|---------|
-| `cpg-out` | `/workspace/cpg-out` | Parsed CPGs (all replicas) |
-| `cpg-archive` | `/workspace/cpg-archive` | Parse deduplication archive |
-| `joern-workspace` | `/workspace/joern-workspace` | Joern workspace |
+Both active CPGs and archive cache live under one base directory mounted at `/workspace/cpg`:
+
+| Host path | Container path | Purpose |
+|-----------|----------------|---------|
+| `${CPG_BASE_DIR}/out` | `/workspace/cpg/out` | Active CPGs (one per `sample_id`) |
+| `${CPG_BASE_DIR}/archive` | `/workspace/cpg/archive` | Persistent parse dedup cache |
+| Docker volume `joern-workspace` | `/workspace/joern-workspace` | Joern workspace |
+
+Keeping both subdirectories on the same physical disk makes archive-to-active restores fast (intra-disk copy).
 
 ---
 
@@ -207,7 +211,8 @@ See `deploy/.env.example`. Important keys:
 | `JOERN_INTERNAL_PORT` | `18080` | Joern HTTP server |
 | `JOERN_QUERY_TIMEOUT_SEC` | `600` | Proxy → Joern timeout |
 | `QUERY_CACHE_MAX_SIZE` | `0` in scale | Per-replica query LRU |
-| `CPG_ARCHIVE_MAX_COUNT` | `100` | Archive eviction |
+| `CPG_BASE_DIR` | `/workspace/cpg` (inside container) | Parent directory for active + archive CPG storage |
+| `CPG_ARCHIVE_MAX_COUNT` | `500` (scale profile) | Archive eviction |
 | `JOERN_READY_TIMEOUT_SEC` | `120` | Entrypoint wait for Joern |
 | `JOERN_MAX_RESTARTS` | `10` | Entrypoint restart limit |
 | `JOERN_WATCHDOG_INTERVAL_SEC` | `5` | Watchdog health probe interval |
