@@ -318,3 +318,45 @@ class FileCPGRegistry:
 
     def save(self) -> None:
         pass
+
+    # ------------------------------------------------------------------
+    # sample_id → source_hash mapping (persisted as .sid-map.json)
+    # ------------------------------------------------------------------
+
+    @property
+    def _sid_map_path(self) -> Path:
+        return self._archive_dir / ".sid-map.json"
+
+    def _load_sid_map(self) -> dict[str, str]:
+        try:
+            self._archive_dir.mkdir(parents=True, exist_ok=True)
+            raw = self._sid_map_path.read_text(encoding="utf-8")
+            data = json.loads(raw)
+            return data if isinstance(data, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def _save_sid_map(self, mapping: dict[str, str]) -> None:
+        self._archive_dir.mkdir(parents=True, exist_ok=True)
+        tmp = self._archive_dir / ".sid-map.json.tmp"
+        tmp.write_text(json.dumps(mapping), encoding="utf-8")
+        os.replace(str(tmp), str(self._sid_map_path))
+
+    def register_sample_id(self, sample_id: str, source_hash: str) -> None:
+        """Persist sample_id → source_hash mapping so it survives process restart."""
+        with self._lock:
+            mapping = self._load_sid_map()
+            mapping[sample_id] = source_hash
+            self._save_sid_map(mapping)
+
+    def lookup_by_sample_id(self, sample_id: str) -> Optional[str]:
+        """Return the source_hash for a known sample_id, or None if not recorded."""
+        with self._lock:
+            mapping = self._load_sid_map()
+            return mapping.get(sample_id)
+
+    def all_sid_entries(self) -> list[tuple[str, str]]:
+        """Return all (sample_id, source_hash) pairs from the persistent sid map."""
+        with self._lock:
+            mapping = self._load_sid_map()
+            return list(mapping.items())

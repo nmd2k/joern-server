@@ -21,6 +21,11 @@ CREATE TABLE IF NOT EXISTS cpg_cache (
     last_used TEXT NOT NULL DEFAULT '',
     size_bytes INTEGER NOT NULL DEFAULT 0,
     extra TEXT
+);
+CREATE TABLE IF NOT EXISTS sid_map (
+    sample_id TEXT PRIMARY KEY,
+    source_hash TEXT NOT NULL,
+    recorded_at TEXT NOT NULL DEFAULT ''
 )"""
 
 _KNOWN_KEYS = frozenset({"archive_path", "sample_id", "archived_at", "last_used", "size_bytes"})
@@ -68,7 +73,10 @@ class CPGRegistry:
             self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA busy_timeout=5000")
-            self._conn.execute(_SCHEMA)
+            for stmt in _SCHEMA.split(";"):
+                stmt = stmt.strip()
+                if stmt:
+                    self._conn.execute(stmt)
             self._conn.commit()
         except (sqlite3.DatabaseError, sqlite3.OperationalError) as exc:
             print(
@@ -80,7 +88,10 @@ class CPGRegistry:
             self._path.unlink(missing_ok=True)
             self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
             self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute(_SCHEMA)
+            for stmt in _SCHEMA.split(";"):
+                stmt = stmt.strip()
+                if stmt:
+                    self._conn.execute(stmt)
             self._conn.commit()
 
         self._self_heal()
@@ -202,6 +213,45 @@ class CPGRegistry:
             except Exception:
                 self._conn.rollback()
                 raise
+
+    # ------------------------------------------------------------------
+    # sample_id → source_hash mapping (persisted, survives restart)
+    # ------------------------------------------------------------------
+
+    def register_sample_id(self, sample_id: str, source_hash: str) -> None:
+        """Persist the mapping sample_id → source_hash so archive lookups survive restart."""
+        import datetime
+        now = datetime.datetime.utcnow().isoformat() + "Z"
+        with self._lock, self._write_lock():
+            self._ensure_loaded()
+            self._conn.execute("BEGIN")
+            try:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO sid_map (sample_id, source_hash, recorded_at) VALUES (?, ?, ?)",
+                    (sample_id, source_hash, now),
+                )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+
+    def lookup_by_sample_id(self, sample_id: str) -> Optional[str]:
+        """Return the source_hash for a known sample_id, or None if not recorded."""
+        with self._lock:
+            self._ensure_loaded()
+            row = self._conn.execute(
+                "SELECT source_hash FROM sid_map WHERE sample_id = ?", (sample_id,)
+            ).fetchone()
+            return row[0] if row else None
+
+    def all_sid_entries(self) -> list[tuple[str, str]]:
+        """Return all (sample_id, source_hash) pairs from sid_map."""
+        with self._lock:
+            self._ensure_loaded()
+            rows = self._conn.execute(
+                "SELECT sample_id, source_hash FROM sid_map"
+            ).fetchall()
+            return [(r[0], r[1]) for r in rows]
 
     def all_entries(self) -> list:
         with self._lock:

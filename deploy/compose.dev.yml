@@ -5,7 +5,10 @@
 #
 # HTTP entry point:
 #   http://localhost:${JOERN_PUBLISH_PORT:-8080}
-# Send X-Session-Id on stateful /query-sync traffic (sticky when behind HAProxy in scale profile).
+#
+# Dev-only extras (not in compose.scale.yml):
+#   DATASETS_HOST_DIR  — bind-mount a local repo tree for quick source_root testing
+#   PARSE_REPO_ALLOWED_ROOTS — container allowlist for source_root paths
 
 services:
   joern:
@@ -19,8 +22,7 @@ services:
       - ../ingest:/workspace/ingest:ro
       - ${DATASETS_HOST_DIR:-../datasets}:/workspace/datasets:ro
       - joern-workspace:/workspace/joern-workspace
-      - cpg-out:/workspace/cpg-out
-      - cpg-archive:/workspace/cpg-archive
+      - ${CPG_BASE_DIR:-../cpg}:/workspace/cpg
     environment:
       JOERN_SERVER_HOST: "${JOERN_SERVER_HOST:-0.0.0.0}"
       JOERN_INTERNAL_PORT: "${JOERN_INTERNAL_PORT:-18080}"
@@ -29,7 +31,7 @@ services:
       JOERN_SERVER_AUTH_USERNAME: "${JOERN_SERVER_AUTH_USERNAME:-}"
       JOERN_SERVER_AUTH_PASSWORD: "${JOERN_SERVER_AUTH_PASSWORD:-}"
       PROXY_PORT: "${JOERN_PUBLISH_PORT:-8080}"
-      CPG_ARCHIVE_DIR: "${CPG_ARCHIVE_DIR:-/workspace/cpg-archive}"
+      CPG_BASE_DIR: "/workspace/cpg"
       CPG_ARCHIVE_MAX_COUNT: "${CPG_ARCHIVE_MAX_COUNT:-100}"
       CPG_ARCHIVE_MAX_GB: "${CPG_ARCHIVE_MAX_GB:-50}"
       QUERY_CACHE_MAX_SIZE: "${QUERY_CACHE_MAX_SIZE:-0}"
@@ -66,5 +68,3 @@ services:
 
 volumes:
   joern-workspace:
-  cpg-out:
-  cpg-archive:

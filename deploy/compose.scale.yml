@@ -8,6 +8,10 @@
 #
 # Sticky routing: send X-Affinity-Key (sample_id) on /query-sync so REPL state stays
 # on one replica. Fallback: X-Session-Id, then source IP.
+#
+# Storage layout (CPG_BASE_DIR must be on one physical disk for fast intra-disk copies):
+#   ${CPG_BASE_DIR}/out      → active CPGs (working set, per sample_id)
+#   ${CPG_BASE_DIR}/archive  → persistent cache (keyed by source hash)
 
 networks:
   joern-net:
@@ -22,10 +26,9 @@ services:
       - joern-net
     volumes:
       - ../ingest:/workspace/ingest:ro
-      - ${DATASETS_HOST_DIR:-../datasets}:/workspace/datasets:ro
+      - ${IRIS_SNAPSHOTS_DIR:-/datadrive/data/IRIS/snapshots}:/workspace/datasets:ro
       - joern-workspace:/workspace/joern-workspace
-      - cpg-out:/workspace/cpg-out
-      - cpg-archive:/workspace/cpg-archive
+      - ${CPG_BASE_DIR}:/workspace/cpg
     environment:
       JOERN_SERVER_HOST: "0.0.0.0"
       JOERN_INTERNAL_PORT: "${JOERN_INTERNAL_PORT:-18080}"
@@ -34,9 +37,15 @@ services:
       JOERN_SERVER_AUTH_USERNAME: "${JOERN_SERVER_AUTH_USERNAME:-}"
       JOERN_SERVER_AUTH_PASSWORD: "${JOERN_SERVER_AUTH_PASSWORD:-}"
       PROXY_PORT: "8080"
-      CPG_ARCHIVE_DIR: "${CPG_ARCHIVE_DIR:-/workspace/cpg-archive}"
-      CPG_ARCHIVE_MAX_COUNT: "${CPG_ARCHIVE_MAX_COUNT:-100}"
-      CPG_ARCHIVE_MAX_GB: "${CPG_ARCHIVE_MAX_GB:-50}"
+      CPG_BASE_DIR: "/workspace/cpg"
+      CPG_OUT_DIR: "/workspace/cpg/out"
+      CPG_ARCHIVE_DIR: "/workspace/cpg/archive"
+      CPG_ARCHIVE_MAX_COUNT: "${CPG_ARCHIVE_MAX_COUNT:-500}"
+      CPG_ARCHIVE_MAX_GB: "${CPG_ARCHIVE_MAX_GB:-100}"
+      PARSE_REPO_ALLOWED_ROOTS: "${PARSE_REPO_ALLOWED_ROOTS:-/workspace/datasets}"
+      PARSE_REPO_MAX_FILES: "${PARSE_REPO_MAX_FILES:-150000}"
+      PARSE_REPO_MAX_BYTES: "${PARSE_REPO_MAX_BYTES:-2000000000}"
+      JOERN_PARSE_REPO_TIMEOUT_SEC: "${JOERN_PARSE_REPO_TIMEOUT_SEC:-7200}"
       QUERY_CACHE_MAX_SIZE: "${QUERY_CACHE_MAX_SIZE:-0}"
       JOERN_MEMORY_RESTART_MB: "${JOERN_MEMORY_RESTART_MB:-3072}"
       JOERN_DRAIN_SEC: "${JOERN_DRAIN_SEC:-7}"
@@ -44,7 +53,6 @@ services:
       JOERN_RESTART_MIN_PEERS: "${JOERN_RESTART_MIN_PEERS:-2}"
       JOERN_HAPROXY_VIP: "${JOERN_HAPROXY_VIP:-http://joern-haproxy:8080}"
       JOERN_ENABLE_DRAIN_TEST: "${JOERN_ENABLE_DRAIN_TEST:-0}"
-      PARSE_REPO_ALLOWED_ROOTS: "${PARSE_REPO_ALLOWED_ROOTS:-/workspace/datasets}"
     ulimits:
       nofile:
         soft: 65536
@@ -92,5 +100,3 @@ services:
 
 volumes:
   joern-workspace:
-  cpg-out:
-  cpg-archive:

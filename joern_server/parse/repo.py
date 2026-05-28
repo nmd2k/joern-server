@@ -13,7 +13,7 @@ from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Optional
 
-from joern_server.cpg import cpg_copy, cpg_remove, get_hash_lock, safe_sample_id
+from joern_server.cpg import cpg_copy, cpg_remove, get_hash_lock, joern_hash_sidecar, safe_sample_id
 from joern_server.parse.language import _normalize_language
 from joern_server.parse.metrics import record_parse_request
 from joern_server.parse.runner import ParseTimeoutError, run_joern_parse
@@ -100,8 +100,11 @@ def execute_repo_parse(
                         now = datetime.datetime.utcnow().isoformat() + "Z"
                         entry["last_used"] = now
                         state.cpg_registry.register(source_hash, entry)
-                        with state.sid_hash_lock:
-                            state.sid_to_hash[sample_id] = source_hash
+                        state.record_sid_hash(sample_id, source_hash)
+                        try:
+                            joern_hash_sidecar(cpg_out).write_text(source_hash, encoding="utf-8")
+                        except Exception:
+                            pass
                         return finish(
                             HTTPStatus.OK,
                             {
@@ -124,8 +127,11 @@ def execute_repo_parse(
         with state.sid_hash_lock:
             existing_hash = state.sid_to_hash.get(sample_id)
         if existing_hash == source_hash:
-            with state.sid_hash_lock:
-                state.sid_to_hash[sample_id] = source_hash
+            state.record_sid_hash(sample_id, source_hash)
+            try:
+                joern_hash_sidecar(cpg_out).write_text(source_hash, encoding="utf-8")
+            except Exception:
+                pass
             return finish(
                 HTTPStatus.OK,
                 {
@@ -185,13 +191,27 @@ def execute_repo_parse(
             "file_count": file_count,
         }
         if result.ok:
-            with state.sid_hash_lock:
-                state.sid_to_hash[sample_id] = source_hash
+            state.record_sid_hash(sample_id, source_hash)
+            try:
+                joern_hash_sidecar(cpg_out).write_text(source_hash, encoding="utf-8")
+            except Exception:
+                pass
         return finish(http_status, body)
     except Exception as exc:
         return finish(HTTPStatus.BAD_GATEWAY, json_error(str(exc), code="parse_failed"))
     finally:
         shutil.rmtree(tmp_src_dir, ignore_errors=True)
+
+
+def _parse_include_extensions(data: dict[str, Any]) -> Optional[list[str]]:
+    raw = data.get("include_extensions")
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        return [p.strip() for p in raw.split(",") if p.strip()]
+    if isinstance(raw, list):
+        return [str(p).strip() for p in raw if str(p).strip()]
+    return None
 
 
 def handle_parse_repo_jsonl(
@@ -241,6 +261,7 @@ def handle_parse_repo_json(state: AppState, data: dict[str, Any]) -> tuple[int, 
     sample_id = safe_sample_id(sample_id_raw)
     language = _normalize_language(str(data.get("language", "")).strip())
     overwrite = bool(data.get("overwrite", False))
+    include_extensions = _parse_include_extensions(data)
 
     if has_upload:
         upload_id = str(data.get("upload_id", "")).strip()
@@ -259,6 +280,7 @@ def handle_parse_repo_json(state: AppState, data: dict[str, Any]) -> tuple[int, 
             tree_root,
             max_files=state.settings.parse_repo_max_files,
             max_bytes=state.settings.parse_repo_max_bytes,
+            include_extensions=include_extensions,
         )
         if err is not None or files is None:
             status = (
@@ -292,6 +314,7 @@ def handle_parse_repo_json(state: AppState, data: dict[str, Any]) -> tuple[int, 
         source_root,
         max_files=state.settings.parse_repo_max_files,
         max_bytes=state.settings.parse_repo_max_bytes,
+        include_extensions=include_extensions,
     )
     if err is not None or files is None:
         status = (

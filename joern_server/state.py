@@ -35,6 +35,24 @@ class AppState:
     def internal_url(self) -> str:
         return self.settings.internal_url
 
+    def record_sid_hash(self, sample_id: str, source_hash: str) -> None:
+        """Record sample_id → source_hash in-memory and persistently in the registry."""
+        with self.sid_hash_lock:
+            self.sid_to_hash[sample_id] = source_hash
+        if self.cpg_registry is not None:
+            try:
+                self.cpg_registry.register_sample_id(sample_id, source_hash)
+            except Exception as exc:
+                print(
+                    json.dumps({
+                        "component": "joern-proxy",
+                        "event": "sid_map_write_error",
+                        "sample_id": sample_id,
+                        "error": str(exc),
+                    }),
+                    flush=True,
+                )
+
     @classmethod
     def from_settings(cls, settings: Settings, *, metrics: Optional[PrometheusMetrics] = None) -> AppState:
         query_cache: Optional[LRUCache] = None
@@ -62,28 +80,42 @@ class AppState:
         return state
 
     def _rebuild_sid_to_hash(self) -> None:
-        """Scan .joern_hash sidecars in cpg-out to restore sid_to_hash after restart."""
+        """Restore sid_to_hash from registry sid_map (durable) and .joern_hash sidecars (fallback)."""
         from joern_server.cpg import joern_hash_sidecar
 
-        cpg_out_dir = Path(self.settings.cpg_out_dir)
-        if not cpg_out_dir.is_dir():
-            return
         count = 0
-        try:
-            for item in cpg_out_dir.iterdir():
-                if item.name.startswith(".") or item.name.endswith(".joern_hash"):
-                    continue
-                sidecar = joern_hash_sidecar(item)
-                if sidecar.is_file():
-                    try:
-                        source_hash = sidecar.read_text(encoding="utf-8").strip()
-                        if source_hash and len(source_hash) == 64:
-                            self.sid_to_hash[item.name] = source_hash
-                            count += 1
-                    except OSError:
-                        pass
-        except OSError:
-            pass
+
+        # Primary: durable sid_map in registry (survives restart even when cpg-out is cleared)
+        if self.cpg_registry is not None:
+            try:
+                for sid, h in self.cpg_registry.all_sid_entries():
+                    if sid and h and len(h) == 64:
+                        self.sid_to_hash[sid] = h
+                        count += 1
+            except Exception:
+                pass
+
+        # Fallback: .joern_hash sidecars in cpg-out (fills gaps for legacy data)
+        cpg_out_dir = Path(self.settings.cpg_out_dir)
+        if cpg_out_dir.is_dir():
+            try:
+                for item in cpg_out_dir.iterdir():
+                    if item.name.startswith(".") or item.name.endswith(".joern_hash"):
+                        continue
+                    if item.name in self.sid_to_hash:
+                        continue
+                    sidecar = joern_hash_sidecar(item)
+                    if sidecar.is_file():
+                        try:
+                            source_hash = sidecar.read_text(encoding="utf-8").strip()
+                            if source_hash and len(source_hash) == 64:
+                                self.sid_to_hash[item.name] = source_hash
+                                count += 1
+                        except OSError:
+                            pass
+            except OSError:
+                pass
+
         if count > 0:
             print(
                 json.dumps({

@@ -91,13 +91,24 @@ def handle_cleanup(
     try:
         if archive_flag and existed and state.cpg_registry is not None:
             source_hash: Optional[str] = None
+            raw_hash = str(data.get("source_hash", "")).strip()
+            if raw_hash and len(raw_hash) == 64:
+                source_hash = raw_hash
             with state.sid_hash_lock:
-                source_hash = state.sid_to_hash.get(sample_id)
+                if source_hash is None:
+                    source_hash = state.sid_to_hash.get(sample_id)
             if source_hash is None:
                 hash_file = joern_hash_sidecar(cpg_out)
                 try:
                     if hash_file.exists():
                         source_hash = hash_file.read_text(encoding="utf-8").strip()
+                except Exception:
+                    pass
+            if source_hash is None and state.cpg_registry is not None:
+                try:
+                    lookup = getattr(state.cpg_registry, "lookup_by_sample_id", None)
+                    if callable(lookup):
+                        source_hash = lookup(sample_id)
                 except Exception:
                     pass
             if source_hash is None:

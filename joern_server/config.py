@@ -55,14 +55,19 @@ class Settings:
     @classmethod
     def from_env(cls) -> Settings:
         parse_repo_max_archive_mb = env_int("PARSE_REPO_MAX_ARCHIVE_MB", 500)
+        # CPG_BASE_DIR sets the parent for both out/ and archive/ on the same physical disk.
+        # Individual CPG_OUT_DIR / CPG_ARCHIVE_DIR override if set explicitly.
+        cpg_base = env_str("CPG_BASE_DIR", "/workspace/cpg")
+        default_cpg_out = f"{cpg_base}/out"
+        default_cpg_archive = f"{cpg_base}/archive"
         return cls(
             proxy_host=env_str("PROXY_HOST", "0.0.0.0"),
             proxy_port=env_int("PROXY_PORT", env_int("JOERN_PUBLISH_PORT", 8080)),
             internal_host=env_str("JOERN_INTERNAL_HOST", "127.0.0.1"),
             internal_port=env_int("JOERN_INTERNAL_PORT", 18080),
             parse_bin=env_str("JOERN_PARSE_BIN", "/opt/joern/joern-cli/joern-parse"),
-            cpg_out_dir=env_str("CPG_OUT_DIR", "/workspace/cpg-out"),
-            cpg_archive_dir=env_str("CPG_ARCHIVE_DIR", "/workspace/cpg-archive"),
+            cpg_out_dir=env_str("CPG_OUT_DIR", default_cpg_out),
+            cpg_archive_dir=env_str("CPG_ARCHIVE_DIR", default_cpg_archive),
             cpg_archive_max_count=env_int("CPG_ARCHIVE_MAX_COUNT", 100),
             cpg_archive_max_gb=env_int("CPG_ARCHIVE_MAX_GB", 50),
             parse_timeout_sec=env_int("JOERN_PARSE_TIMEOUT_SEC", 900),

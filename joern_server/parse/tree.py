@@ -68,14 +68,24 @@ def collect_tree_files(
     *,
     max_files: int,
     max_bytes: int,
+    include_extensions: Optional[list[str]] = None,
 ) -> tuple[Optional[dict[str, str]], Optional[dict]]:
     """Walk root and collect relative path → UTF-8 content. Enforce limits."""
     if not root.is_dir():
         return None, json_error(f"source path is not a directory: {root}", code="invalid_source_root")
+    ext_allow: Optional[frozenset[str]] = None
+    if include_extensions:
+        ext_allow = frozenset(
+            e if e.startswith(".") else f".{e}"
+            for e in include_extensions
+            if isinstance(e, str) and e.strip()
+        )
     files: dict[str, str] = {}
     total_bytes = 0
     for path in sorted(root.rglob("*")):
         if not path.is_file():
+            continue
+        if ext_allow is not None and path.suffix.lower() not in ext_allow:
             continue
         rel = path.relative_to(root).as_posix()
         err = validate_repo_path(rel)
