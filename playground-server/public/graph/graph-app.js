@@ -31,57 +31,56 @@
     return null;
   }
 
-  function isUnresolvedMethod(fullName) {
-    return !fullName || fullName.indexOf('unresolved') !== -1 || fullName.indexOf('<unresolved') !== -1;
-  }
-
-  function parseMethodList(stdout) {
+  function parseStringList(stdout) {
     if (!stdout || typeof stdout !== 'string') return [];
-    var methods = [];
     var strings = [];
     var re = /"((?:[^"\\]|\\.)*)"/g;
     var match;
     while ((match = re.exec(stdout)) !== null) {
-      strings.push(match[1]);
-    }
-    var nums = stdout.match(/,\s*(-?\d+)\s*\)/g) || [];
-    var numValues = nums.map(function(s) {
-      var m = s.match(/-?\d+/);
-      return m ? parseInt(m[0]) : -1;
-    });
-    var tupleCount = Math.min(Math.floor(strings.length / 3), numValues.length);
-    for (var i = 0; i < tupleCount; i++) {
-      var fullName = strings[i * 3];
-      var name = strings[i * 3 + 1];
-      var file = strings[i * 3 + 2];
-      var line = numValues[i];
-      if (fullName && name && !isUnresolvedMethod(fullName)) {
-        methods.push({ fullName: fullName, name: name, file: file || '', line: line > 0 ? line : null });
+      var val = match[1];
+      if (val && val.indexOf('List(') === -1 && val.indexOf('val ') === -1) {
+        strings.push(val);
       }
     }
-    methods.sort(function(a, b) {
-      if (a.file !== b.file) return a.file < b.file ? -1 : 1;
-      if (a.line !== null && b.line !== null) return a.line - b.line;
-      return a.name < b.name ? -1 : 1;
+    var seen = {};
+    return strings.filter(function(s) {
+      if (seen[s]) return false;
+      seen[s] = true;
+      return true;
     });
-    return methods;
+  }
+
+  function normalizeMeta(meta) {
+    if (!meta) return {};
+    var out = {};
+    var keys = Object.keys(meta);
+    for (var i = 0; i < keys.length; i++) {
+      out[keys[i]] = meta[keys[i]];
+    }
+    if (out.line_number != null && out.lineNumber == null) out.lineNumber = out.line_number;
+    if (out.column_number != null && out.columnNumber == null) out.columnNumber = out.column_number;
+    if (out.node_type == null && out.label) out.node_type = out.label;
+    return out;
   }
 
   var app = Vue.createApp({
     data: function() {
       return {
         affinityKey: getAffinityKey(),
-        methods: [],
-        methodFilter: '',
-        methodsLoading: false,
-        methodsError: null,
-        cpgSummary: null,
+        files: [],
+        fileFilter: '',
+        filesLoading: false,
+        filesError: null,
+        graphScope: 'file',
+        graphFile: '',
         graphMethod: '',
+        nodeLimit: 200,
         graphType: 'cfg',
         graphLoading: false,
         graphError: null,
         graphData: null,
         graphMetadata: null,
+        cpgSummary: null,
         selectedNode: null,
         selectedNodeMeta: {},
         detailOpen: false,
@@ -90,19 +89,22 @@
       };
     },
     computed: {
-      filteredMethods: function() {
-        if (!this.methodFilter.trim()) return this.methods;
-        var q = this.methodFilter.toLowerCase();
-        return this.methods.filter(function(m) {
-          return m.fullName.toLowerCase().indexOf(q) !== -1 ||
-                 m.name.toLowerCase().indexOf(q) !== -1 ||
-                 m.file.toLowerCase().indexOf(q) !== -1;
+      filteredFiles: function() {
+        if (!this.fileFilter.trim()) return this.files;
+        var q = this.fileFilter.toLowerCase();
+        return this.files.filter(function(f) {
+          return f.toLowerCase().indexOf(q) !== -1;
         });
+      },
+      canLoadGraph: function() {
+        if (this.graphScope === 'file') return Boolean(this.graphFile.trim());
+        if (this.graphScope === 'method') return Boolean(this.graphMethod.trim());
+        return true;
       },
       selectedNodeExtraMeta: function() {
         var meta = this.selectedNodeMeta;
         if (!meta) return {};
-        var known = ['node_type', 'code', 'lineNumber', 'columnNumber', 'order', 'argumentIndex', 'fullName', 'name', 'id', 'label', 'shape'];
+        var known = ['node_type', 'code', 'lineNumber', 'line_number', 'columnNumber', 'column_number', 'order', 'argumentIndex', 'fullName', 'name', 'id', 'label', 'shape'];
         var extra = {};
         var keys = Object.keys(meta);
         for (var i = 0; i < keys.length; i++) {
@@ -120,9 +122,19 @@
         return h;
       },
 
+      cpgPathFor: function(sampleId) {
+        return '/workspace/cpg/out/' + sampleId;
+      },
+
       ensureCpgLoaded: async function() {
         if (!this.affinityKey) return false;
-        var cpgPath = '/workspace/cpg-out/' + this.affinityKey;
+        try {
+          if (window.opener && window.opener.PlaygroundState && window.opener.PlaygroundState.isLoaded
+              && window.opener.PlaygroundState.affinityKey === this.affinityKey) {
+            return true;
+          }
+        } catch (e) { /* cross-origin or closed opener */ }
+        var cpgPath = this.cpgPathFor(this.affinityKey);
         try {
           var resp = await fetch('/api/query-sync', {
             method: 'POST',
@@ -136,19 +148,19 @@
         }
       },
 
-      fetchMethods: async function() {
+      fetchFiles: async function() {
         var self = this;
-        self.methodsLoading = true;
-        self.methodsError = null;
+        self.filesLoading = true;
+        self.filesError = null;
         try {
           if (self.affinityKey) {
             var loaded = await self.ensureCpgLoaded();
             if (!loaded) {
-              self.methodsError = 'Failed to load CPG for ' + self.affinityKey + '. Parse it in the Playground first.';
+              self.filesError = 'Failed to load CPG for ' + self.affinityKey + '. Parse it in the Playground first.';
               return;
             }
           }
-          var query = 'cpg.method.filterNot(_.fullName.contains("unresolved")).map(m => (m.fullName, m.name, m.filename, m.lineNumber.getOrElse(-1))).l';
+          var query = 'cpg.method.filterNot(_.fullName.contains("unresolved")).filterNot(_.isExternal).map(_.filename).toSet.l';
           var resp = await fetch('/api/query-sync', {
             method: 'POST',
             headers: self._buildHeaders(),
@@ -156,41 +168,52 @@
           });
           var data = await resp.json();
           if (resp.ok && data.success !== false) {
-            self.methods = parseMethodList(data.stdout || '');
-            var files = {};
-            for (var i = 0; i < self.methods.length; i++) {
-              if (self.methods[i].file) files[self.methods[i].file] = true;
-            }
-            self.cpgSummary = { methods: self.methods.length, files: Object.keys(files).length };
+            self.files = parseStringList(data.stdout || '').sort();
+            self.cpgSummary = { methods: null, files: self.files.length };
           } else {
-            self.methodsError = 'Query failed: ' + ((data.stdout || data.error || '') + '').substring(0, 200);
+            self.filesError = 'Query failed: ' + ((data.stdout || data.error || '') + '').substring(0, 200);
           }
         } catch (e) {
-          self.methodsError = 'Network error: ' + e.message;
+          self.filesError = 'Network error: ' + e.message;
         } finally {
-          self.methodsLoading = false;
+          self.filesLoading = false;
         }
       },
 
-      selectMethod: function(fullName) {
-        this.graphMethod = fullName;
+      selectFile: function(fileName) {
+        this.graphScope = 'file';
+        this.graphFile = fileName;
         this.loadGraph();
+      },
+
+      onScopeChange: function() {
+        this.graphData = null;
+        this.graphMetadata = null;
+        this.graphError = null;
+        this.selectedNode = null;
+        this.detailOpen = false;
+        if (this.cyInstance) { this.cyInstance.destroy(); this.cyInstance = null; }
       },
 
       escapeHTML: escapeHTML,
 
       onTypeChange: function() {
-        this.graphData = null;
-        this.graphMetadata = null;
-        this.selectedNode = null;
-        this.detailOpen = false;
-        this.graphError = null;
-        if (this.cyInstance) { this.cyInstance.destroy(); this.cyInstance = null; }
+        this.onScopeChange();
+      },
+
+      buildGraphBody: function() {
+        var body = {
+          scope: this.graphScope,
+          node_limit: parseInt(this.nodeLimit, 10) || 200
+        };
+        if (this.graphScope === 'file') body.file_name = this.graphFile.trim();
+        if (this.graphScope === 'method') body.method_full_name = this.graphMethod.trim();
+        return body;
       },
 
       loadGraph: async function() {
         var self = this;
-        if (!self.graphMethod.trim()) return;
+        if (!self.canLoadGraph) return;
         self.graphLoading = true;
         self.graphError = null;
         self.graphData = null;
@@ -202,10 +225,17 @@
         var endpoint = TYPE_ENDPOINTS[self.graphType] || '/api/graph/cfg';
 
         try {
+          if (self.affinityKey) {
+            var loaded = await self.ensureCpgLoaded();
+            if (!loaded) {
+              self.graphError = 'Failed to load CPG session. Load the CPG in the Playground first.';
+              return;
+            }
+          }
           var resp = await fetch(endpoint, {
             method: 'POST',
             headers: self._buildHeaders(),
-            body: JSON.stringify({ method_full_name: self.graphMethod.trim() })
+            body: JSON.stringify(self.buildGraphBody())
           });
           var data = await resp.json();
           if (resp.ok && data.nodes) {
@@ -215,7 +245,7 @@
           } else {
             var msg = data.error || JSON.stringify(data, null, 2);
             if (data.code === 'stub_method') {
-              msg = 'This method has no real control flow (external/unresolved stub). Choose a method from your project source files in the list.';
+              msg = 'This method has no real control flow (external/unresolved stub). Try File or Whole CPG scope instead.';
             }
             self.graphError = msg;
           }
@@ -233,7 +263,7 @@
 
         for (var i = 0; i < graphData.nodes.length; i++) {
           var n = graphData.nodes[i];
-          var meta = metadata[n.id] || {};
+          var meta = normalizeMeta(metadata[n.id] || {});
           var label = meta.code || n.label || n.id;
           if (typeof label === 'string' && label.length > 30) label = label.substring(0, 30) + '...';
 
@@ -288,14 +318,14 @@
 
         self.cyInstance.on('mouseover', 'node', function(evt) {
           var node = evt.target; var data = node.data();
-          var meta = metadata[data.id] || {};
+          var meta = normalizeMeta(metadata[data.id] || data.meta || {});
           self.showTooltip(evt, data, meta, tooltip, container);
         });
         self.cyInstance.on('mousemove', 'node', function(evt) { self._positionTooltip(evt, tooltip, container); });
         self.cyInstance.on('mouseout', 'node', function() { self.hideTooltip(); });
         self.cyInstance.on('tap', 'node', function(evt) {
           var node = evt.target; var data = node.data();
-          self.openDetail(data, metadata[data.id] || {});
+          self.openDetail(data, normalizeMeta(metadata[data.id] || data.meta || {}));
         });
         self.cyInstance.on('tap', function(evt) { if (evt.target === self.cyInstance) self.closeDetail(); });
       },
@@ -304,7 +334,7 @@
         var self = this;
         var nodeType = (meta && meta.node_type) || data.shape || data.label || '';
         var code = (meta && meta.code) || data.label || '';
-        var lineNumber = (meta && meta.lineNumber) || null;
+        var lineNumber = (meta && (meta.lineNumber || meta.line_number)) || null;
         var html = '<div class="tt-type" style="color:' + escapeHTML(self._nodeTypeColor(nodeType)) + '">' + escapeHTML(nodeType) + '</div>';
         html += '<div class="tt-code">' + escapeHTML(code) + '</div>';
         if (lineNumber) html += '<div class="tt-line">Line ' + escapeHTML(String(lineNumber)) + '</div>';
@@ -356,11 +386,15 @@
       var self = this;
       self.$nextTick(function() {
         var urlParams = new URLSearchParams(window.location.search);
+        var fileParam = urlParams.get('file');
         var methodParam = urlParams.get('method');
         var typeParam = urlParams.get('type');
-        if (methodParam) self.graphMethod = methodParam;
+        var scopeParam = urlParams.get('scope');
+        if (fileParam) { self.graphFile = fileParam; self.graphScope = 'file'; }
+        if (methodParam) { self.graphMethod = methodParam; self.graphScope = 'method'; }
+        if (scopeParam) self.graphScope = scopeParam;
         if (typeParam && TYPE_ENDPOINTS[typeParam]) self.graphType = typeParam;
-        if (self.affinityKey) self.fetchMethods();
+        if (self.affinityKey) self.fetchFiles();
       });
     }
   });

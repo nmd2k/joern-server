@@ -15,30 +15,30 @@
   <!-- Session + CPG summary -->
   <div v-if="affinityKey" class="session-bar">
     <span>&#9679; {{ affinityKey }}</span>
-    <span v-if="cpgSummary" class="summary-text">{{ cpgSummary.methods }} methods &middot; {{ cpgSummary.files }} files</span>
+    <span v-if="cpgSummary" class="summary-text">{{ cpgSummary.files }} source files</span>
   </div>
   <div v-else class="session-bar warn">No CPG session &mdash; set affinity key or load a CPG from the <a href="/playground/index.html">Playground</a></div>
 
   <div class="top-row">
-    <!-- Method browser (left) -->
+    <!-- File browser (left) -->
     <div class="method-browser">
       <div class="browser-header">
-        <h3>Methods</h3>
-        <button class="btn btn-xs btn-secondary" @click="fetchMethods" :disabled="methodsLoading">
-          <span v-if="methodsLoading" class="spinner"></span> {{ methodsLoading ? '' : '&#8635; Refresh' }}
+        <h3>Source Files</h3>
+        <button class="btn btn-xs btn-secondary" @click="fetchFiles" :disabled="filesLoading">
+          <span v-if="filesLoading" class="spinner"></span> {{ filesLoading ? '' : '&#8635; Refresh' }}
         </button>
       </div>
-      <input v-model="methodFilter" type="text" class="filter-input" placeholder="Filter methods...">
+      <input v-model="fileFilter" type="text" class="filter-input" placeholder="Filter files...">
       <div class="method-list-wrap">
-        <div v-if="methodsLoading" class="center-text"><span class="spinner"></span></div>
-        <div v-else-if="methodsError" class="error-text">{{ methodsError }}</div>
-        <div v-else-if="!filteredMethods.length" class="center-text muted">{{ methods.length ? 'No match' : 'Click Refresh to load' }}</div>
+        <div v-if="filesLoading" class="center-text"><span class="spinner"></span></div>
+        <div v-else-if="filesError" class="error-text">{{ filesError }}</div>
+        <div v-else-if="!filteredFiles.length" class="center-text muted">{{ files.length ? 'No match' : 'Click Refresh to load files' }}</div>
         <ul v-else class="method-list">
-          <li v-for="m in filteredMethods" :key="m.fullName"
-              :class="{active: graphMethod === m.fullName}"
-              @click="selectMethod(m.fullName)">
-            <span class="method-name">{{ m.name }}</span>
-            <span class="method-file">{{ m.file }}</span>
+          <li v-for="f in filteredFiles" :key="f"
+              :class="{active: graphScope === 'file' && graphFile === f}"
+              @click="selectFile(f)">
+            <span class="method-name">{{ f.split('/').pop() || f }}</span>
+            <span class="method-file">{{ f }}</span>
           </li>
         </ul>
       </div>
@@ -47,7 +47,15 @@
     <!-- Controls + graph (right) -->
     <div class="graph-area">
       <div class="controls">
-        <div class="form-group" style="flex:0 0 200px">
+        <div class="form-group" style="flex:0 0 140px">
+          <label>Scope</label>
+          <select v-model="graphScope" @change="onScopeChange">
+            <option value="file">By File</option>
+            <option value="cpg">Whole CPG</option>
+            <option value="method">Single Method</option>
+          </select>
+        </div>
+        <div class="form-group" style="flex:0 0 180px">
           <label>Graph Type</label>
           <select v-model="graphType" @change="onTypeChange">
             <option value="cfg">Control Flow (CFG)</option>
@@ -56,21 +64,34 @@
             <option value="ast">Abstract Syntax Tree (AST)</option>
           </select>
         </div>
-        <div class="form-group" style="flex:1">
+        <div class="form-group" style="flex:1" v-if="graphScope === 'file'">
+          <label>Source File</label>
+          <input v-model="graphFile" type="text" placeholder="Select from list or type path" @keyup.enter="loadGraph">
+        </div>
+        <div class="form-group" style="flex:1" v-if="graphScope === 'method'">
           <label>Method Full Name</label>
-          <input v-model="graphMethod" type="text" placeholder="Select from list or type manually" @keyup.enter="loadGraph">
+          <input v-model="graphMethod" type="text" placeholder="e.g. foo:bar(void)" @keyup.enter="loadGraph">
+        </div>
+        <div class="form-group" style="flex:0 0 120px" v-if="graphScope === 'cpg'">
+          <label>Method Limit</label>
+          <input v-model.number="nodeLimit" type="number" min="1" max="5000">
         </div>
         <div class="form-group" style="flex:0 0 auto">
-          <button class="btn btn-primary" @click="loadGraph" :disabled="graphLoading || !graphMethod.trim()">
+          <button class="btn btn-primary" @click="loadGraph" :disabled="graphLoading || !canLoadGraph">
             <span v-if="graphLoading" class="spinner"></span>
             {{ graphLoading ? 'Loading...' : 'Load Graph' }}
           </button>
         </div>
       </div>
 
+      <div v-if="graphScope === 'cpg'" class="info-bar" style="margin-bottom:8px">
+        Whole-CPG view merges graphs from up to {{ nodeLimit }} internal methods (excludes external/unresolved stubs).
+      </div>
+
       <div v-if="graphError" class="error-box">{{ graphError }}</div>
       <div v-if="graphData" class="info-bar">
         Showing {{ graphData.nodes.length }} nodes, {{ graphData.edges.length }} edges
+        <span v-if="graphData.scope"> &mdash; scope: {{ graphData.scope }}</span>
         <span v-if="graphMetadata"> &mdash; metadata for {{ Object.keys(graphMetadata).length }} nodes</span>
       </div>
 
@@ -88,8 +109,8 @@
             <tr v-if="selectedNode.shape"><td>Shape</td><td>{{ selectedNode.shape }}</td></tr>
             <tr v-if="selectedNodeMeta.node_type"><td>Node Type</td><td><code>{{ selectedNodeMeta.node_type }}</code></td></tr>
             <tr v-if="'code' in selectedNodeMeta"><td>Code</td><td><code>{{ selectedNodeMeta.code }}</code></td></tr>
-            <tr v-if="'lineNumber' in selectedNodeMeta"><td>Line Number</td><td>{{ selectedNodeMeta.lineNumber }}</td></tr>
-            <tr v-if="'columnNumber' in selectedNodeMeta"><td>Column Number</td><td>{{ selectedNodeMeta.columnNumber }}</td></tr>
+            <tr v-if="selectedNodeMeta.lineNumber || selectedNodeMeta.line_number"><td>Line Number</td><td>{{ selectedNodeMeta.lineNumber || selectedNodeMeta.line_number }}</td></tr>
+            <tr v-if="selectedNodeMeta.columnNumber || selectedNodeMeta.column_number"><td>Column Number</td><td>{{ selectedNodeMeta.columnNumber || selectedNodeMeta.column_number }}</td></tr>
             <tr v-if="'order' in selectedNodeMeta"><td>Order</td><td>{{ selectedNodeMeta.order }}</td></tr>
             <tr v-if="'argumentIndex' in selectedNodeMeta"><td>Argument Index</td><td>{{ selectedNodeMeta.argumentIndex }}</td></tr>
             <tr v-if="selectedNodeMeta.fullName"><td>Full Name</td><td><code>{{ selectedNodeMeta.fullName }}</code></td></tr>

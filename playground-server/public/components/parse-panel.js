@@ -90,7 +90,7 @@
           var data = await resp.json();
           if (resp.ok && data.ok) {
             self.parseResult = data;
-            var cpgPath = data.cpg_path || '/workspace/cpg-out/' + self.sampleId;
+            var cpgPath = data.cpg_path || '/workspace/cpg/out/' + self.sampleId;
             if (window.PlaygroundState) {
               window.PlaygroundState.isLoaded = true;
               window.PlaygroundState.sampleId = self.sampleId;
